@@ -1,4 +1,4 @@
-name: Build Windows Installer
+name: Build and Release Installers
 
 on:
   workflow_dispatch:
@@ -7,44 +7,82 @@ on:
       - 'v*.*.*'
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   NODE_VERSION: 22
 
 jobs:
   build-windows:
-    name: Build Zap Ai Tool Windows EXE
+    name: Build Windows EXE
     runs-on: windows-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-
       - name: Install dependencies
         run: npm ci
-
       - name: Type-check
         run: npm run check
-
-      - name: Build renderer and Electron main process
-        run: npm run build
-
-      - name: Package Windows NSIS installer
+      - name: Build Windows NSIS installer
         run: npm run package:win
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-
-      - name: Upload EXE artifact
+      - name: Upload raw EXE build
         uses: actions/upload-artifact@v4
         with:
-          name: zap-ai-tool-windows-installer
+          name: zap-ai-tool-windows-exe
           path: release/*.exe
           if-no-files-found: error
           retention-days: 14
+
+  build-linux:
+    name: Build Linux DEB
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Type-check
+        run: npm run check
+      - name: Build Linux DEB package
+        run: npm run package:deb
+      - name: Upload raw DEB build
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-ai-tool-linux-deb
+          path: release/*.deb
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download installer assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: zap-ai-tool-*
+          path: release-assets
+          merge-multiple: true
+      - name: Publish versioned release with raw installers
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Zap Ai Tool ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            release-assets/*.exe
+            release-assets/*.deb

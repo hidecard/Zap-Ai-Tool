@@ -74,7 +74,7 @@ npm run desktop
 
 Put local GGUF files in `Models/` before launching the desktop shell. The settings dropdown scans this directory on startup. The current runtime adapter is a safe integration boundary; connecting llama.cpp is tracked separately in `Todo.md`.
 
-For Windows installer builds, see [`docs/windows-release.md`](./docs/windows-release.md). GitHub Actions produces an unsigned NSIS `.exe` artifact on manual runs or version tags such as `v0.3.0`.
+For Windows and Linux installer builds, see [`docs/release.md`](./docs/release.md). A version tag such as `v0.3.1` publishes raw `.exe` and `.deb` files directly to a GitHub Release; it does not publish ZIP release assets.
 
 See [`Todo.md`](./Todo.md) for the tracked implementation roadmap.
 

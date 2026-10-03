@@ -1,6 +1,6 @@
 {
   "name": "zap-ai-tool",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Local-first, model-agnostic AI software engineer desktop app",
   "type": "module",
@@ -13,6 +13,7 @@
     "renderer:dev": "vite --host 127.0.0.1",
     "desktop:dev": "npm run build && electron .",
     "package:win": "npm run build && electron-builder --win nsis --publish never",
+    "package:deb": "npm run build && electron-builder --linux deb --publish never",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
@@ -56,6 +57,18 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "shortcutName": "Zap Ai Tool"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Development",
+      "desktopName": "Zap Ai Tool"
     }
   },
   "devDependencies": {
@@ -75,5 +88,8 @@
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
-  "author": "hidecard"
+  "author": {
+    "name": "hidecard",
+    "email": "hidecard@users.noreply.github.com"
+  }
 }
