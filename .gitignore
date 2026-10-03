@@ -27,3 +27,4 @@ Thumbs.db
 .cache/
 coverage/
 release/
+release-artifact/
