@@ -28,3 +28,4 @@ Thumbs.db
 coverage/
 release/
 release-artifact/
+release-assets-v*/
