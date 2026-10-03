@@ -19,6 +19,7 @@ The repository now contains a tested TypeScript core foundation in `src/`:
 
 - Electron desktop shell with a React/Vite renderer and secure preload bridge.
 - Model Management settings panel with `.gguf` discovery, selection, load state, and health/error status.
+- Workspace folder picker, drag-and-drop loading, and a safe project context preview with token estimate.
 - Domain types for models, workspaces, tool calls, diffs, and agent tasks.
 - `.gguf` model discovery with sorted descriptors.
 - Model selection lifecycle with safe unload/load ordering and runtime health checks.
@@ -72,6 +73,8 @@ npm run desktop
 ```
 
 Put local GGUF files in `Models/` before launching the desktop shell. The settings dropdown scans this directory on startup. The current runtime adapter is a safe integration boundary; connecting llama.cpp is tracked separately in `Todo.md`.
+
+For Windows installer builds, see [`docs/windows-release.md`](./docs/windows-release.md). GitHub Actions produces an unsigned NSIS `.exe` artifact on manual runs or version tags such as `v0.3.0`.
 
 See [`Todo.md`](./Todo.md) for the tracked implementation roadmap.
 

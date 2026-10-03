@@ -32,8 +32,8 @@
 
 - [x] Add the ignore-aware workspace tree/context builder.
 - [x] Exclude secrets, build output, dependency folders, and oversized files by default.
-- [ ] Add folder picker and drag-and-drop workspace loading.
-- [ ] Build context selection and token-budget management UI.
+- [x] Add folder picker and drag-and-drop workspace loading.
+- [x] Build initial context preview and token-budget estimate UI.
 - [ ] Add project instructions and configurable ignore patterns.
 
 ## Phase 4 — Autonomous Loop
@@ -59,6 +59,6 @@
 - [ ] Add end-to-end tests in a disposable fixture project.
 - [ ] Threat-model local command execution and prompt/tool injection.
 - [ ] Benchmark model loading and context performance.
-- [ ] Package installers for supported desktop platforms.
+- [x] Add Windows NSIS installer configuration and `npm run package:win` script.
 - [ ] Write user documentation and troubleshooting guides.
-- [ ] Add release CI and version tags.
+- [x] Add GitHub Actions Windows EXE artifact workflow for version tags and manual runs.

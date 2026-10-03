@@ -1,6 +1,6 @@
 {
   "name": "zap-ai-tool",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Local-first, model-agnostic AI software engineer desktop app",
   "type": "module",
@@ -12,11 +12,51 @@
     "desktop": "npm run build && electron .",
     "renderer:dev": "vite --host 127.0.0.1",
     "desktop:dev": "npm run build && electron .",
+    "package:win": "npm run build && electron-builder --win nsis --publish never",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
   "engines": {
     "node": ">=20"
+  },
+  "build": {
+    "appId": "com.zapai.tool",
+    "productName": "Zap Ai Tool",
+    "artifactName": "Zap-Ai-Tool-${version}-${os}-${arch}.${ext}",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "Models",
+        "to": "Models",
+        "filter": [
+          ".gitkeep"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "executableName": "Zap-Ai-Tool"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Zap Ai Tool"
+    }
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
@@ -25,6 +65,7 @@
     "@vitejs/plugin-react": "^6.1.1",
     "concurrently": "^10.0.5",
     "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
     "prettier": "^3.4.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
@@ -33,5 +74,6 @@
   "dependencies": {
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
-  }
+  },
+  "author": "hidecard"
 }

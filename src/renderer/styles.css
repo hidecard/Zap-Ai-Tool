@@ -280,6 +280,91 @@ code,
   color: #7890ad;
   font-size: 12px;
 }
+.drop-zone {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 17px 20px;
+  border-style: dashed;
+  border-color: #385777;
+  color: #b4c6dc;
+}
+.drop-zone:hover {
+  border-color: #a8e6cf;
+  background: #13263b;
+}
+.drop-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: #1d3752;
+  color: #a8e6cf;
+  font-size: 18px;
+}
+.drop-zone strong,
+.drop-zone span {
+  display: block;
+}
+.drop-zone strong {
+  font-size: 12px;
+}
+.drop-zone span {
+  margin-top: 4px;
+  color: #7890ad;
+  font-size: 11px;
+}
+.context-card {
+  padding: 18px 20px;
+}
+.context-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.context-heading h3 {
+  max-width: 470px;
+  margin: 7px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+}
+.token-count {
+  color: #a8e6cf;
+  font:
+    11px 'DM Mono',
+    monospace;
+  white-space: nowrap;
+}
+.context-files {
+  margin-top: 15px;
+  border-top: 1px solid #233751;
+}
+.context-file {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #1c2d43;
+  color: #acc0d7;
+  font:
+    11px 'DM Mono',
+    monospace;
+}
+.context-file span:first-child {
+  color: #a8e6cf;
+}
+.context-file span:last-child {
+  color: #6f86a5;
+}
+.context-more {
+  padding-top: 10px;
+  color: #7890ad;
+  font-size: 11px;
+}
 @media (max-width: 1050px) {
   .workspace-grid {
     padding: 22px;

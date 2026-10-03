@@ -1,13 +1,16 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { discoverModels } from '../src/modelDiscovery.js';
 import { ModelManager } from '../src/modelManager.js';
+import { buildWorkspaceContext } from '../src/workspace.js';
 
 const distributionDirectory = fileURLToPath(new URL('..', import.meta.url));
 const projectDirectory = fileURLToPath(new URL('../..', import.meta.url));
-const modelsDirectory = join(projectDirectory, 'Models');
+const modelsDirectory = app.isPackaged
+  ? join(process.resourcesPath, 'Models')
+  : join(projectDirectory, 'Models');
 
 const runtime = {
   async load(): Promise<void> {
@@ -48,6 +51,18 @@ ipcMain.handle('models:select', async (_event, modelId: string) => {
 });
 
 ipcMain.handle('models:unload', async () => modelManager.unload());
+
+ipcMain.handle('workspace:choose', async () => {
+  const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  const selectedPath = result.filePaths[0];
+  if (!selectedPath) return null;
+  return buildWorkspaceContext(selectedPath);
+});
+
+ipcMain.handle('workspace:load', async (_event, rootPath: string) =>
+  buildWorkspaceContext(rootPath),
+);
 
 app.whenReady().then(async () => {
   await createWindow();

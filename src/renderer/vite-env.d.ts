@@ -1,4 +1,4 @@
-import type { ModelDescriptor, ModelManagerState } from '../index.js';
+import type { ModelDescriptor, ModelManagerState, WorkspaceContext } from '../index.js';
 
 declare global {
   interface Window {
@@ -6,6 +6,8 @@ declare global {
       listModels(): Promise<{ models: ModelDescriptor[]; state: ModelManagerState }>;
       selectModel(modelId: string): Promise<ModelManagerState>;
       unloadModel(): Promise<ModelManagerState>;
+      chooseWorkspace(): Promise<WorkspaceContext | null>;
+      loadWorkspace(rootPath: string): Promise<WorkspaceContext>;
     };
   }
 }

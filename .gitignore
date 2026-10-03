@@ -26,3 +26,4 @@ Thumbs.db
 *.log
 .cache/
 coverage/
+release/
