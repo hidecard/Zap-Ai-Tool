@@ -4,10 +4,10 @@ The workflow at `.github/workflows/build-windows.yml` builds **raw installer fil
 
 ## Release outputs
 
-For a tag such as `v0.3.1`, the release contains:
+For a tag such as `v0.3.2`, the release contains:
 
-- `Zap-Ai-Tool-0.3.1-win-x64.exe` — Windows x64 NSIS installer
-- `Zap-Ai-Tool-0.3.1-linux-amd64.deb` — Linux x64 Debian package
+- `Zap-Ai-Tool-0.3.2-win-x64.exe` — Windows x64 NSIS installer
+- `Zap-Ai-Tool-0.3.2-linux-amd64.deb` — Linux x64 Debian package
 
 The installer files may be wrapped by GitHub internally when downloading Actions artifacts, but the files attached to the GitHub Release are the original `.exe` and `.deb` files.
 
@@ -16,13 +16,13 @@ The installer files may be wrapped by GitHub internally when downloading Actions
 Update the version, commit, and push a semantic version tag:
 
 ```bash
-npm version 0.3.1 --no-git-tag-version
+npm version 0.3.2 --no-git-tag-version
 npm install --package-lock-only
 git add package.json package-lock.json
-git commit -m "release: v0.3.1"
+git commit -m "release: v0.3.2"
 git push origin main
-git tag v0.3.1
-git push origin v0.3.1
+git tag v0.3.2
+git push origin v0.3.2
 ```
 
 The workflow runs two platform jobs in parallel. After both succeed, the release job creates or updates the GitHub Release and attaches the raw `.exe` and `.deb` files.
