@@ -4,10 +4,14 @@
   "private": true,
   "description": "Local-first, model-agnostic AI software engineer desktop app",
   "type": "module",
+  "main": "dist/desktop/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && vite build",
     "test": "tsx --test test/**/*.test.ts",
     "check": "tsc --noEmit -p tsconfig.json",
+    "desktop": "npm run build && electron .",
+    "renderer:dev": "vite --host 127.0.0.1",
+    "desktop:dev": "npm run build && electron .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
@@ -16,8 +20,18 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^10.0.5",
+    "electron": "^44.5.1",
     "prettier": "^3.4.2",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vite": "^8.3.2"
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   }
 }

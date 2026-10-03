@@ -17,6 +17,8 @@ The initial product flow is divided into four modules:
 
 The repository now contains a tested TypeScript core foundation in `src/`:
 
+- Electron desktop shell with a React/Vite renderer and secure preload bridge.
+- Model Management settings panel with `.gguf` discovery, selection, load state, and health/error status.
 - Domain types for models, workspaces, tool calls, diffs, and agent tasks.
 - `.gguf` model discovery with sorted descriptors.
 - Model selection lifecycle with safe unload/load ordering and runtime health checks.
@@ -66,7 +68,10 @@ npm install
 npm test
 npm run check
 npm run build
+npm run desktop
 ```
+
+Put local GGUF files in `Models/` before launching the desktop shell. The settings dropdown scans this directory on startup. The current runtime adapter is a safe integration boundary; connecting llama.cpp is tracked separately in `Todo.md`.
 
 See [`Todo.md`](./Todo.md) for the tracked implementation roadmap.
 

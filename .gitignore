@@ -7,8 +7,9 @@ build/
 target/
 
 # Local model files (large and potentially licensed)
-Models/
+Models/*
 *.gguf
+!Models/.gitkeep
 
 # Environment and secrets
 .env

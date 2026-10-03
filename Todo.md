@@ -7,11 +7,11 @@
 - [x] Add safety principles for local files and terminal tools.
 - [x] Create a public GitHub repository with description and topics.
 - [ ] Select and record the final open-source license.
-- [ ] Decide between Tauri and Electron after the desktop spike.
+- [x] Choose Electron for the desktop shell after the architecture spike.
 
 ## Phase 1 — Foundation
 
-- [ ] Create the desktop app shell (architecture spike pending).
+- [x] Create the Electron desktop app shell with React/Vite renderer and secure preload bridge.
 - [x] Add TypeScript formatting, type-check, build, and test scripts.
 - [x] Define domain types for models, workspaces, tool calls, diffs, and tasks.
 - [x] Add structured application logging and error reporting boundary.
@@ -23,6 +23,7 @@
 - [x] Create the `Models/` directory convention and discovery boundary.
 - [x] Scan for `.gguf` model files and expose metadata.
 - [x] Implement model selection service boundary for the settings UI.
+- [x] Implement the model settings dropdown in the desktop renderer.
 - [x] Implement safe unload/load lifecycle for switching models.
 - [x] Add model runtime health checks and actionable error state.
 - [ ] Test with Llama, DeepSeek, and Qwen-compatible GGUF models.
