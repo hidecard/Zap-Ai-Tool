@@ -19,7 +19,10 @@ The repository now contains a tested TypeScript core foundation in `src/`:
 
 - Domain types for models, workspaces, tool calls, diffs, and agent tasks.
 - `.gguf` model discovery with sorted descriptors.
+- Model selection lifecycle with safe unload/load ordering and runtime health checks.
 - Ignore-aware workspace tree/context generation that excludes common build folders and secret files.
+- Read-only workspace File Reader and permissioned Terminal runner with output capture, timeout, and cancellation.
+- Bounded autonomous task transitions with retry accounting.
 - Tool permission checks that keep file access inside the workspace and block unsafe command patterns.
 - Structured JSON logging and a local settings store.
 - Node test runner coverage for the foundation modules.

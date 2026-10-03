@@ -22,9 +22,9 @@
 
 - [x] Create the `Models/` directory convention and discovery boundary.
 - [x] Scan for `.gguf` model files and expose metadata.
-- [ ] Implement model selection in the settings dropdown.
-- [ ] Implement safe unload/load lifecycle for switching models.
-- [ ] Add model runtime health checks and actionable error messages.
+- [x] Implement model selection service boundary for the settings UI.
+- [x] Implement safe unload/load lifecycle for switching models.
+- [x] Add model runtime health checks and actionable error state.
 - [ ] Test with Llama, DeepSeek, and Qwen-compatible GGUF models.
 
 ## Phase 3 — Workspace & Context
@@ -38,11 +38,11 @@
 ## Phase 4 — Autonomous Loop
 
 - [x] Define the task state machine types: plan → inspect → draft → validate → revise → complete.
-- [ ] Implement a read-only File Reader tool.
-- [ ] Implement a permissioned Terminal tool with command preview.
-- [ ] Add tool-call approval policies and cancellation.
-- [ ] Capture stdout, stderr, exit codes, and duration for each command.
-- [ ] Add bounded self-correction retries for validation failures.
+- [x] Implement a read-only File Reader tool.
+- [x] Implement a permissioned Terminal tool with command execution boundary.
+- [x] Add tool-call approval policies and cancellation support.
+- [x] Capture stdout, stderr, exit codes, and duration for each command.
+- [x] Add bounded self-correction retry accounting to the task state machine.
 
 ## Phase 5 — Human-in-the-Loop
 
