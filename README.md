@@ -13,6 +13,19 @@ The initial product flow is divided into four modules:
 3. **Autonomous Loop** — let the assistant plan, use approved tools such as Terminal and File Reader, draft changes, and run validation.
 4. **Human-in-the-Loop** — show old/new code in a diff view; only apply changes after the user presses **Approve**. **Reject** sends feedback back to the assistant.
 
+## Current implementation
+
+The repository now contains a tested TypeScript core foundation in `src/`:
+
+- Domain types for models, workspaces, tool calls, diffs, and agent tasks.
+- `.gguf` model discovery with sorted descriptors.
+- Ignore-aware workspace tree/context generation that excludes common build folders and secret files.
+- Tool permission checks that keep file access inside the workspace and block unsafe command patterns.
+- Structured JSON logging and a local settings store.
+- Node test runner coverage for the foundation modules.
+
+The desktop shell choice remains an architecture spike item. The core is intentionally UI- and runtime-agnostic so it can be hosted in Tauri or Electron without changing the safety boundary.
+
 ## Planned architecture
 
 ```text
@@ -28,7 +41,7 @@ Orchestrator
   ├─ Context builder
   ├─ Tool permission layer
   ├─ Draft + diff engine
-  └─ Validation / self-correction loop
+  ├─ Validation / self-correction state machine
         │
         ▼
 Local project workspace
@@ -43,9 +56,16 @@ Local project workspace
 - Make every proposed change reviewable and reversible.
 - Record tool activity and validation results for debugging.
 
-## Current status
+## Development
 
-This repository currently captures the product flow and implementation roadmap. See [`Todo.md`](./Todo.md) for the tracked work items.
+```bash
+npm install
+npm test
+npm run check
+npm run build
+```
+
+See [`Todo.md`](./Todo.md) for the tracked implementation roadmap.
 
 ## Suggested technology direction
 
@@ -57,7 +77,7 @@ The implementation can use any suitable desktop stack. A practical first spike i
 - Diff engine: a standard unified diff library with a side-by-side viewer
 - Tests: unit tests for orchestration and integration tests for a sandboxed workspace
 
-Technology choices remain open until the first architecture spike is complete.
+Technology choices remain open until the first desktop shell spike is complete.
 
 ## Contributing
 

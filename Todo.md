@@ -11,16 +11,17 @@
 
 ## Phase 1 — Foundation
 
-- [ ] Create the desktop app shell.
-- [ ] Add TypeScript/React linting, formatting, and test scripts.
-- [ ] Define the domain types for models, workspaces, tool calls, diffs, and tasks.
-- [ ] Add structured application logging and error reporting.
-- [ ] Add a settings store for model directory and workspace preferences.
+- [ ] Create the desktop app shell (architecture spike pending).
+- [x] Add TypeScript formatting, type-check, build, and test scripts.
+- [x] Define domain types for models, workspaces, tool calls, diffs, and tasks.
+- [x] Add structured application logging and error reporting boundary.
+- [x] Add a local settings store for model directory and workspace preferences.
+- [x] Add the initial core test suite.
 
 ## Phase 2 — Model Management
 
-- [ ] Create the `Models/` directory convention and onboarding screen.
-- [ ] Scan for `.gguf` model files and display metadata where available.
+- [x] Create the `Models/` directory convention and discovery boundary.
+- [x] Scan for `.gguf` model files and expose metadata.
 - [ ] Implement model selection in the settings dropdown.
 - [ ] Implement safe unload/load lifecycle for switching models.
 - [ ] Add model runtime health checks and actionable error messages.
@@ -28,15 +29,15 @@
 
 ## Phase 3 — Workspace & Context
 
+- [x] Add the ignore-aware workspace tree/context builder.
+- [x] Exclude secrets, build output, dependency folders, and oversized files by default.
 - [ ] Add folder picker and drag-and-drop workspace loading.
-- [ ] Generate an ignore-aware project tree.
-- [ ] Exclude secrets, build output, dependency folders, and oversized files by default.
-- [ ] Build context selection and token-budget management.
+- [ ] Build context selection and token-budget management UI.
 - [ ] Add project instructions and configurable ignore patterns.
 
 ## Phase 4 — Autonomous Loop
 
-- [ ] Define the task state machine: plan → inspect → draft → validate → revise → complete.
+- [x] Define the task state machine types: plan → inspect → draft → validate → revise → complete.
 - [ ] Implement a read-only File Reader tool.
 - [ ] Implement a permissioned Terminal tool with command preview.
 - [ ] Add tool-call approval policies and cancellation.
@@ -53,7 +54,7 @@
 
 ## Phase 6 — Quality & Release
 
-- [ ] Add unit tests for model discovery, context building, patch application, and permissions.
+- [x] Add unit tests for model discovery, context building, and permissions.
 - [ ] Add end-to-end tests in a disposable fixture project.
 - [ ] Threat-model local command execution and prompt/tool injection.
 - [ ] Benchmark model loading and context performance.
