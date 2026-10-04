@@ -119,6 +119,12 @@ export function App(): ReactElement {
   const [prompt, setPrompt] = useState('');
   const [agentMode, setAgentMode] = useState<'build' | 'ask'>('build');
   const [activity, setActivity] = useState('Ready for your next task.');
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewDecision, setReviewDecision] = useState<'pending' | 'approved' | 'rejected'>(
+    'pending',
+  );
+  const [feedback, setFeedback] = useState('');
+  const [activityLog, setActivityLog] = useState<string[]>(['Workspace ready · local-only mode']);
 
   const refreshModels = async (): Promise<void> => {
     setLoading(true);
@@ -226,8 +232,31 @@ export function App(): ReactElement {
   ];
   const runPrompt = (): void => {
     if (!prompt.trim()) return;
-    setActivity(`Drafting a plan for: ${prompt.trim()}`);
+    const request = prompt.trim();
+    setActivity(`Drafting a plan for: ${request}`);
+    setActivityLog((items) => [`Agent started · ${request}`, ...items].slice(0, 5));
+    if (agentMode === 'build') {
+      setReviewDecision('pending');
+      setReviewOpen(true);
+    }
     setPrompt('');
+  };
+  const decideReview = (decision: 'approved' | 'rejected'): void => {
+    setReviewDecision(decision);
+    setReviewOpen(false);
+    setActivity(
+      decision === 'approved'
+        ? 'Approved change · backup created'
+        : 'Rejected draft · feedback saved',
+    );
+    setActivityLog((items) =>
+      [
+        decision === 'approved'
+          ? 'Change approved · backup created'
+          : 'Draft rejected · no files changed',
+        ...items,
+      ].slice(0, 5),
+    );
   };
 
   return (
@@ -268,7 +297,11 @@ export function App(): ReactElement {
             ⑂
           </button>
           <div className="activity-spacer" />
-          <button className="activity-button" title="Settings">
+          <button
+            className={activeView === 'settings' ? 'activity-button active' : 'activity-button'}
+            title="Settings"
+            onClick={() => setActiveView('settings')}
+          >
             ⚙
           </button>
         </nav>
@@ -365,6 +398,11 @@ export function App(): ReactElement {
               <span className="terminal-prompt">zap@local</span>
               <span className="terminal-path"> {workspace?.rootPath ?? '~/workspace'}</span>
               <span className="terminal-cursor"> $ {activity}</span>
+              <div className="activity-log">
+                {activityLog.map((item) => (
+                  <span key={item}>› {item}</span>
+                ))}
+              </div>
             </div>
           </div>
         </section>
@@ -466,6 +504,59 @@ export function App(): ReactElement {
         onDrop={handleDrop}
       />
       {workspaceError && <div className="toast-error">{workspaceError}</div>}
+      {reviewOpen && (
+        <div className="review-backdrop" role="presentation" onClick={() => setReviewOpen(false)}>
+          <section
+            className="review-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="review-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="review-header">
+              <div>
+                <p className="eyebrow">PROPOSED CHANGE · REVIEW REQUIRED</p>
+                <h2 id="review-title">Update {activeFile}</h2>
+              </div>
+              <button onClick={() => setReviewOpen(false)}>×</button>
+            </div>
+            <div className="diff-meta">
+              <span>src/renderer/{activeFile}</span>
+              <span className="diff-count">+2 −1</span>
+            </div>
+            <div className="diff-view">
+              <div className="diff-line removed">
+                <span>−</span>
+                <code>const mode = 'draft';</code>
+              </div>
+              <div className="diff-line added">
+                <span>+</span>
+                <code>const mode = 'approved';</code>
+              </div>
+              <div className="diff-line added">
+                <span>+</span>
+                <code>setActivity('Ready for validation');</code>
+              </div>
+            </div>
+            <textarea
+              value={feedback}
+              onChange={(event) => setFeedback(event.target.value)}
+              placeholder="Optional feedback for the agent…"
+            />
+            <div className="review-footer">
+              <span>Original files stay untouched until approval.</span>
+              <div>
+                <button className="reject-button" onClick={() => decideReview('rejected')}>
+                  Reject
+                </button>
+                <button className="approve-button" onClick={() => decideReview('approved')}>
+                  Approve &amp; Apply
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
