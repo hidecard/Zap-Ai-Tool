@@ -21,20 +21,22 @@ export interface TerminalResult {
   stderr: string;
   exitCode: number | null;
   durationMs: number;
+  timedOut: boolean;
+  cancelled: boolean;
 }
 
 export async function runApprovedTerminal(
   workspaceRoot: string,
   call: ToolCall,
-  options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  options: { timeoutMs?: number; signal?: AbortSignal; maxOutputBytes?: number } = {},
 ): Promise<TerminalResult> {
   const command = call.command;
   if (call.name !== 'terminal.run' || !command) throw new Error('A terminal command is required.');
   const validation = validateToolCall(call, workspaceRoot);
   if (!validation.allowed) throw new Error(validation.reason ?? 'Tool call is not allowed.');
-
   const started = Date.now();
   const timeoutMs = options.timeoutMs ?? 30_000;
+  const maxOutputBytes = options.maxOutputBytes ?? 1_000_000;
   return await new Promise((resolve, reject) => {
     const child = spawn('sh', ['-c', command], {
       cwd: workspaceRoot,
@@ -42,26 +44,30 @@ export async function runApprovedTerminal(
     });
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+    let cancelled = false;
     let settled = false;
-    const finish = (result: TerminalResult): void => {
-      if (!settled) {
-        settled = true;
-        resolve(result);
-      }
-    };
-    const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
-    const abort = (): void => {
+    const terminate = (reason: 'timeout' | 'cancel'): void => {
+      if (reason === 'timeout') timedOut = true;
+      else cancelled = true;
       child.kill('SIGTERM');
     };
+    const timer = setTimeout(() => terminate('timeout'), timeoutMs);
+    const abort = (): void => terminate('cancel');
     options.signal?.addEventListener('abort', abort, { once: true });
+    const append = (current: string, chunk: Buffer): string => {
+      const remaining = maxOutputBytes - Buffer.byteLength(current, 'utf8');
+      return remaining <= 0 ? current : current + chunk.toString('utf8').slice(0, remaining);
+    };
     child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString();
+      stdout = append(stdout, chunk);
     });
     child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
+      stderr = append(stderr, chunk);
     });
     child.on('error', (error: Error) => {
       clearTimeout(timer);
+      options.signal?.removeEventListener('abort', abort);
       if (!settled) {
         settled = true;
         reject(error);
@@ -70,7 +76,17 @@ export async function runApprovedTerminal(
     child.on('close', (exitCode: number | null) => {
       clearTimeout(timer);
       options.signal?.removeEventListener('abort', abort);
-      finish({ stdout, stderr, exitCode, durationMs: Date.now() - started });
+      if (!settled) {
+        settled = true;
+        resolve({
+          stdout,
+          stderr,
+          exitCode,
+          durationMs: Date.now() - started,
+          timedOut,
+          cancelled,
+        });
+      }
     });
   });
 }

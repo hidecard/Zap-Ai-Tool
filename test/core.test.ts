@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -10,6 +10,7 @@ import { createTask, transitionTask } from '../src/taskRunner.js';
 import { readWorkspaceFile, runApprovedTerminal } from '../src/tools.js';
 import { buildWorkspaceContext } from '../src/workspace.js';
 import { applyFileDiffs, rollbackFileDiffs } from '../src/patches.js';
+import { createFileReviews, selectReviewedDiffs } from '../src/review.js';
 
 test('discovers and sorts GGUF models while ignoring other files', async () => {
   const root = await mkdtemp(join(tmpdir(), 'zap-models-'));
@@ -84,6 +85,35 @@ test('blocks a stale patch when the current file differs from the draft', async 
     /Patch conflict/,
   );
   assert.equal(await readFile(file, 'utf8'), 'const value = 3;\n');
+});
+
+test('rolls back every file if a later patch fails preflight', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'zap-atomic-'));
+  await writeFile(join(root, 'first.txt'), 'one');
+  await writeFile(join(root, 'second.txt'), 'changed');
+  await assert.rejects(
+    () =>
+      applyFileDiffs(root, [
+        { path: 'first.txt', before: 'one', after: 'updated' },
+        { path: 'second.txt', before: 'original', after: 'updated' },
+      ]),
+    /Patch conflict/,
+  );
+  assert.equal(await readFile(join(root, 'first.txt'), 'utf8'), 'one');
+});
+
+test('rejects symlink patch targets and supports hunk review selection', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'zap-review-'));
+  const outside = await mkdtemp(join(tmpdir(), 'zap-outside-'));
+  await writeFile(join(outside, 'secret.txt'), 'secret');
+  await symlink(join(outside, 'secret.txt'), join(root, 'linked.txt'));
+  await assert.rejects(
+    () => applyFileDiffs(root, [{ path: 'linked.txt', before: 'secret', after: 'leak' }]),
+    /Symlink/,
+  );
+  const reviews = createFileReviews([{ path: 'app.ts', before: 'a\nb\nc', after: 'a\nB\nc\nd' }]);
+  assert.equal(reviews[0]?.hunks.length, 1);
+  assert.deepEqual(selectReviewedDiffs(reviews, [{ path: 'app.ts', selected: false }]), []);
 });
 
 test('keeps file access inside the selected workspace', () => {
@@ -170,6 +200,40 @@ test('reads workspace files and runs only approved terminal calls', async () => 
   });
   assert.equal(result.stdout, 'ready');
   assert.equal(result.exitCode, 0);
+  assert.equal(result.timedOut, false);
+  assert.equal(result.cancelled, false);
+});
+
+test('reports terminal cancellation and timeout instead of hanging', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'zap-cancel-'));
+  const controller = new AbortController();
+  const cancelled = runApprovedTerminal(
+    root,
+    {
+      id: 'terminal-cancel',
+      name: 'terminal.run',
+      risk: 'read-only',
+      summary: 'sleep',
+      command: 'sleep 1',
+      status: 'proposed',
+    },
+    { signal: controller.signal, timeoutMs: 5_000 },
+  );
+  controller.abort();
+  assert.equal((await cancelled).cancelled, true);
+  const timedOut = await runApprovedTerminal(
+    root,
+    {
+      id: 'terminal-timeout',
+      name: 'terminal.run',
+      risk: 'read-only',
+      summary: 'sleep',
+      command: 'sleep 1',
+      status: 'proposed',
+    },
+    { timeoutMs: 10 },
+  );
+  assert.equal(timedOut.timedOut, true);
 });
 
 test('enforces bounded autonomous task transitions', () => {

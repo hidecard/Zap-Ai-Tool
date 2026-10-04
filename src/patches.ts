@@ -1,4 +1,4 @@
-import { access, copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { access, copyFile, lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import type { FileDiff } from './domain.js';
 import { isPathInsideWorkspace } from './permissions.js';
@@ -16,14 +16,27 @@ function backupRoot(workspaceRoot: string): string {
 }
 
 function safeRelativePath(workspaceRoot: string, filePath: string): string {
-  const absolute = resolve(workspaceRoot, filePath);
+  const root = resolve(workspaceRoot);
+  const absolute = resolve(root, filePath);
+  const relativePath = relative(root, absolute);
   if (
-    !isPathInsideWorkspace(workspaceRoot, absolute) ||
-    absolute.includes(`${resolve(workspaceRoot)}/.zap-backups/`)
+    !isPathInsideWorkspace(root, absolute) ||
+    relativePath === '.zap-backups' ||
+    relativePath.startsWith('.zap-backups/')
   ) {
     throw new Error(`Patch path is outside the selected workspace: ${filePath}`);
   }
-  return relative(workspaceRoot, absolute);
+  return relativePath;
+}
+
+async function assertRegularFile(path: string): Promise<void> {
+  try {
+    const metadata = await lstat(path);
+    if (metadata.isSymbolicLink()) throw new Error(`Symlink paths are not supported: ${path}`);
+    if (!metadata.isFile()) throw new Error(`Patch target is not a regular file: ${path}`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
 }
 
 export async function applyFileDiffs(
@@ -34,12 +47,17 @@ export async function applyFileDiffs(
   if (diffs.length === 0) throw new Error('At least one file diff is required.');
   const backupDirectory = join(backupRoot(workspaceRoot), backupId);
   const manifest: BackupManifest = { backupId, createdAt: new Date().toISOString(), files: [] };
+  const targets = new Set<string>();
   await mkdir(backupDirectory, { recursive: true });
   try {
+    // Preflight every target before changing any file. This prevents a later
+    // conflict from leaving an earlier approved change behind.
     for (const diff of diffs) {
       const relativePath = safeRelativePath(workspaceRoot, diff.path);
+      if (targets.has(relativePath)) throw new Error(`Duplicate patch path: ${relativePath}`);
+      targets.add(relativePath);
       const target = join(workspaceRoot, relativePath);
-      const backupPath = join(backupDirectory, relativePath);
+      await assertRegularFile(target);
       let existed = true;
       try {
         await access(target);
@@ -48,27 +66,34 @@ export async function applyFileDiffs(
       }
       if (existed) {
         const current = await readFile(target, 'utf8');
-        if (current !== diff.before) {
+        if (current !== diff.before)
           throw new Error(`Patch conflict: ${relativePath} changed since the draft was created.`);
-        }
       } else if (diff.before !== '') {
         throw new Error(`Patch conflict: ${relativePath} does not exist as expected.`);
       }
       manifest.files.push({ path: relativePath, existed });
-      if (existed) {
-        await mkdir(dirname(backupPath), { recursive: true });
-        await copyFile(target, backupPath);
-      }
-      const temporaryPath = `${target}.zap-tmp-${process.pid}-${Date.now()}`;
-      await mkdir(dirname(target), { recursive: true });
-      await writeFile(temporaryPath, diff.after, 'utf8');
-      await rename(temporaryPath, target);
+    }
+
+    for (const entry of manifest.files) {
+      if (!entry.existed) continue;
+      const target = join(workspaceRoot, entry.path);
+      const backupPath = join(backupDirectory, entry.path);
+      await mkdir(dirname(backupPath), { recursive: true });
+      await copyFile(target, backupPath);
     }
     await writeFile(
       join(backupDirectory, 'manifest.json'),
       `${JSON.stringify(manifest, null, 2)}\n`,
       'utf8',
     );
+
+    for (const diff of diffs) {
+      const target = join(workspaceRoot, safeRelativePath(workspaceRoot, diff.path));
+      const temporaryPath = `${target}.zap-tmp-${process.pid}-${Date.now()}`;
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(temporaryPath, diff.after, 'utf8');
+      await rename(temporaryPath, target);
+    }
     return { backupId, changedFiles: manifest.files.map((file) => file.path) };
   } catch (error) {
     await rollbackFileDiffs(workspaceRoot, backupId).catch(() => undefined);
@@ -88,6 +113,7 @@ export async function rollbackFileDiffs(
   for (const entry of manifest.files) {
     const target = join(workspaceRoot, entry.path);
     if (entry.existed) {
+      await mkdir(dirname(target), { recursive: true });
       await copyFile(join(backupDirectory, entry.path), target);
     } else {
       await rm(target, { force: true });

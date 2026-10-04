@@ -1,7 +1,13 @@
-import { isAbsolute, resolve, relative } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 import type { ToolCall } from './domain.js';
 
-const BLOCKED_COMMANDS = [/\brm\s+-rf\b/i, /\bsudo\b/i, /\bcurl\b.*\|/i, /\bwget\b.*\|/i];
+const BLOCKED_COMMANDS = [
+  /\brm\s+(?:-[^\s]*r[^\s]*\s+|--recursive\s+).*/i,
+  /\bsudo\b/i,
+  /\b(?:curl|wget)\b[^\n]*\|/i,
+  /(?:^|[;&|])\s*(?:chmod|chown)\b/i,
+  />\s*\/etc\//i,
+];
 
 export function isPathInsideWorkspace(workspaceRoot: string, candidatePath: string): boolean {
   const root = resolve(workspaceRoot);

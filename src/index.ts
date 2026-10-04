@@ -7,3 +7,4 @@ export * from './settings.js';
 export * from './taskRunner.js';
 export * from './tools.js';
 export * from './workspace.js';
+export * from './review.js';

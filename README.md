@@ -27,6 +27,8 @@ The repository now contains a tested TypeScript core foundation in `src/`:
 - Read-only workspace File Reader and permissioned Terminal runner with output capture, timeout, and cancellation.
 - Bounded autonomous task transitions with retry accounting.
 - Tool permission checks that keep file access inside the workspace and block unsafe command patterns.
+- Transactional patch application with conflict preflight, backup/rollback, symlink rejection, and file/hunk review primitives.
+- Bounded terminal execution with explicit timeout/cancellation results and output limits.
 - Structured JSON logging and a local settings store.
 - Node test runner coverage for the foundation modules.
 
@@ -75,6 +77,8 @@ npm run desktop
 Put local GGUF files in `Models/` before launching the desktop shell. The settings dropdown scans this directory on startup. The current runtime adapter is a safe integration boundary; connecting llama.cpp is tracked separately in `Todo.md`.
 
 For Windows and Linux installer builds, see [`docs/release.md`](./docs/release.md). A version tag such as `v0.3.2` publishes raw `.exe` and `.deb` files directly to a GitHub Release; it does not publish ZIP release assets.
+
+The backend safety assumptions and residual risks are documented in [`docs/threat-model.md`](./docs/threat-model.md).
 
 For Windows renderer and installation troubleshooting, see [`docs/troubleshooting.md`](./docs/troubleshooting.md).
 

@@ -48,7 +48,7 @@
 ## Phase 5 — Human-in-the-Loop
 
 - [x] Build side-by-side old/new diff view.
-- [ ] Support file-by-file and hunk-by-hunk review.
+- [x] Support file-by-file and hunk-by-hunk review.
 - [x] Implement Approve, Reject, and feedback flows.
 - [x] Apply approved patches atomically with backup/rollback support.
 - [x] Show an activity timeline and task completion summary.
@@ -56,8 +56,8 @@
 ## Phase 6 — Quality & Release
 
 - [x] Add unit tests for model discovery, context building, and permissions.
-- [ ] Add end-to-end tests in a disposable fixture project.
-- [ ] Threat-model local command execution and prompt/tool injection.
+- [x] Add end-to-end tests in a disposable fixture project.
+- [x] Threat-model local command execution and prompt/tool injection.
 - [ ] Benchmark model loading and context performance.
 - [x] Add Windows NSIS installer configuration and `npm run package:win` script.
 - [x] Add Linux x64 DEB configuration and `npm run package:deb` script.
