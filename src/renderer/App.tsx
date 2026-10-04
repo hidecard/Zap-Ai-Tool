@@ -1,12 +1,105 @@
-import { useEffect, useState, type DragEvent, type ReactElement } from 'react';
+import { useEffect, useMemo, useState, type DragEvent, type ReactElement } from 'react';
 import type { ModelDescriptor, ModelManagerState, WorkspaceContext } from '../index.js';
 
 function formatBytes(bytes: number): string {
-  if (bytes < 1024 ** 2) return `${Math.round(bytes / 1024)} KB`;
+  if (bytes < 1024 ** 2) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
 }
 
+const previewModels: ModelDescriptor[] = [
+  {
+    id: 'qwen2.5-coder-7b.gguf',
+    name: 'Qwen2.5 Coder 7B',
+    path: 'Models/qwen2.5-coder-7b.gguf',
+    format: 'gguf',
+    sizeBytes: 4.2 * 1024 ** 3,
+    modifiedAt: new Date().toISOString(),
+  },
+  {
+    id: 'deepseek-coder-6.7b.gguf',
+    name: 'DeepSeek Coder 6.7B',
+    path: 'Models/deepseek-coder-6.7b.gguf',
+    format: 'gguf',
+    sizeBytes: 3.8 * 1024 ** 3,
+    modifiedAt: new Date().toISOString(),
+  },
+];
+
+const previewWorkspace: WorkspaceContext = {
+  rootPath: '/Users/you/Projects/atlas-dashboard',
+  files: [
+    { relativePath: 'src', sizeBytes: 0, kind: 'directory' },
+    { relativePath: 'src/renderer', sizeBytes: 0, kind: 'directory' },
+    { relativePath: 'src/renderer/App.tsx', sizeBytes: 12480, kind: 'file' },
+    { relativePath: 'src/renderer/styles.css', sizeBytes: 8920, kind: 'file' },
+    { relativePath: 'src/domain.ts', sizeBytes: 3610, kind: 'file' },
+    { relativePath: 'package.json', sizeBytes: 2180, kind: 'file' },
+    { relativePath: 'README.md', sizeBytes: 6040, kind: 'file' },
+  ],
+  estimatedTokens: 8100,
+};
+
+const previewCode: Record<string, string[]> = {
+  'App.tsx': [
+    "import { useState } from 'react';",
+    "import { AgentPanel } from './components/AgentPanel';",
+    '',
+    'export function App() {',
+    "  const [task, setTask] = useState('');",
+    '',
+    '  return (',
+    '    <main className="workspace">',
+    '      <Editor />',
+    '      <AgentPanel task={task} onChange={setTask} />',
+    '    </main>',
+    '  );',
+    '}',
+  ],
+  'styles.css': [
+    ':root {',
+    '  --canvas: #0b1220;',
+    '  --panel: #101c2e;',
+    '  --accent: #a8e6cf;',
+    '}',
+    '',
+    '.workspace {',
+    '  display: grid;',
+    '  grid-template-columns: 1fr 380px;',
+    '  min-height: 100vh;',
+    '}',
+  ],
+  'domain.ts': [
+    "export type ToolName = 'file.read' | 'terminal.run';",
+    "export type ToolRisk = 'read-only' | 'mutating' | 'network';",
+    '',
+    'export interface FileDiff {',
+    '  path: string;',
+    '  before: string;',
+    '  after: string;',
+    '}',
+  ],
+};
+
+function createPreviewState(selectedId = previewModels[0]?.id): ModelManagerState {
+  return {
+    available: previewModels,
+    selectedId,
+    loadedId: selectedId,
+    status: 'ready',
+    error: undefined,
+  };
+}
+
+function fileIcon(path: string): string {
+  if (path.endsWith('.tsx')) return 'TS';
+  if (path.endsWith('.css')) return '#';
+  if (path.endsWith('.json')) return '{}';
+  if (path.endsWith('.md')) return 'M';
+  return '◇';
+}
+
 export function App(): ReactElement {
+  const previewMode = typeof window.zap === 'undefined';
   const [models, setModels] = useState<ModelDescriptor[]>([]);
   const [state, setState] = useState<ModelManagerState>({
     available: [],
@@ -15,17 +108,29 @@ export function App(): ReactElement {
     status: 'idle',
     error: undefined,
   });
-  const [workspace, setWorkspace] = useState<WorkspaceContext | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [workspace, setWorkspace] = useState<WorkspaceContext | null>(
+    previewMode ? previewWorkspace : null,
+  );
+  const [loading, setLoading] = useState(!previewMode);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | undefined>();
+  const [activeFile, setActiveFile] = useState('App.tsx');
+  const [activeView, setActiveView] = useState('explorer');
+  const [prompt, setPrompt] = useState('');
+  const [agentMode, setAgentMode] = useState<'build' | 'ask'>('build');
+  const [activity, setActivity] = useState('Ready for your next task.');
 
   const refreshModels = async (): Promise<void> => {
     setLoading(true);
     try {
-      const result = await window.zap.listModels();
-      setModels(result.models);
-      setState(result.state);
+      if (previewMode) {
+        setModels(previewModels);
+        setState(createPreviewState());
+      } else {
+        const result = await window.zap.listModels();
+        setModels(result.models);
+        setState(result.state);
+      }
     } catch (error) {
       setState((current) => ({
         ...current,
@@ -36,13 +141,17 @@ export function App(): ReactElement {
       setLoading(false);
     }
   };
-
   useEffect(() => {
     void refreshModels();
   }, []);
 
   const selectModel = async (modelId: string): Promise<void> => {
     if (!modelId) return;
+    if (previewMode) {
+      setState({ ...createPreviewState(modelId), status: 'loading', loadedId: undefined });
+      window.setTimeout(() => setState(createPreviewState(modelId)), 450);
+      return;
+    }
     setState((current) => ({
       ...current,
       selectedId: modelId,
@@ -64,15 +173,21 @@ export function App(): ReactElement {
     setWorkspaceBusy(true);
     setWorkspaceError(undefined);
     try {
-      setWorkspace(await window.zap.loadWorkspace(rootPath));
+      setWorkspace(
+        previewMode ? { ...previewWorkspace, rootPath } : await window.zap.loadWorkspace(rootPath),
+      );
+      setActivity('Project context refreshed.');
     } catch (error) {
       setWorkspaceError(error instanceof Error ? error.message : String(error));
     } finally {
       setWorkspaceBusy(false);
     }
   };
-
   const chooseWorkspace = async (): Promise<void> => {
+    if (previewMode) {
+      await loadWorkspace(previewWorkspace.rootPath);
+      return;
+    }
     setWorkspaceBusy(true);
     setWorkspaceError(undefined);
     try {
@@ -84,11 +199,11 @@ export function App(): ReactElement {
       setWorkspaceBusy(false);
     }
   };
-
   const handleDrop = (event: DragEvent<HTMLDivElement>): void => {
     event.preventDefault();
     const file = event.dataTransfer.files.item(0) as (File & { path?: string }) | null;
     if (file?.path) void loadWorkspace(file.path);
+    else if (previewMode) void loadWorkspace(previewWorkspace.rootPath);
     else setWorkspaceError('Drop a folder from your file manager, or use Choose folder.');
   };
 
@@ -101,164 +216,256 @@ export function App(): ReactElement {
         : state.status === 'error'
           ? 'Needs attention'
           : 'No model loaded';
-  const visibleFiles = workspace?.files.filter((file) => file.kind === 'file').slice(0, 7) ?? [];
+  const files = useMemo(
+    () => workspace?.files.filter((file) => file.kind === 'file') ?? [],
+    [workspace],
+  );
+  const code = previewCode[activeFile] ?? [
+    '// Select a file to inspect its context.',
+    '// Zap will keep your project local and safe.',
+  ];
+  const runPrompt = (): void => {
+    if (!prompt.trim()) return;
+    setActivity(`Drafting a plan for: ${prompt.trim()}`);
+    setPrompt('');
+  };
 
   return (
-    <main className="app-shell">
-      <header className="topbar">
+    <main className="ide-shell">
+      <header className="ide-titlebar">
         <div className="brand-mark">Z</div>
-        <div>
-          <p className="eyebrow">LOCAL AI SOFTWARE ENGINEER</p>
-          <h1>Zap Ai Tool</h1>
-        </div>
+        <span className="brand-name">Zap Ai Tool</span>
+        <span className="title-divider">/</span>
+        <span className="project-title">
+          {workspace ? workspace.rootPath.split('/').pop() : 'No workspace'}
+        </span>
         <div className="topbar-spacer" />
+        {previewMode && <span className="preview-badge">BROWSER PREVIEW</span>}
         <span className={`status-dot ${state.status}`} />
         <span className="status-text">{statusLabel}</span>
       </header>
-      <section className="workspace-grid">
-        <aside className="sidebar panel">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">SETTINGS</p>
-              <h2>Model Management</h2>
-            </div>
-            <button
-              className="icon-button"
-              onClick={() => void refreshModels()}
-              title="Refresh models"
-            >
-              ↻
+      <div className="ide-body">
+        <nav className="activity-bar" aria-label="Primary navigation">
+          <button
+            className={activeView === 'explorer' ? 'activity-button active' : 'activity-button'}
+            onClick={() => setActiveView('explorer')}
+            title="Explorer"
+          >
+            ▱<span>1</span>
+          </button>
+          <button
+            className={activeView === 'search' ? 'activity-button active' : 'activity-button'}
+            onClick={() => setActiveView('search')}
+            title="Search"
+          >
+            ⌕
+          </button>
+          <button
+            className={activeView === 'source' ? 'activity-button active' : 'activity-button'}
+            onClick={() => setActiveView('source')}
+            title="Source control"
+          >
+            ⑂
+          </button>
+          <div className="activity-spacer" />
+          <button className="activity-button" title="Settings">
+            ⚙
+          </button>
+        </nav>
+        <aside className="explorer-panel">
+          <div className="explorer-heading">
+            <span>EXPLORER</span>
+            <button onClick={() => void chooseWorkspace()} title="Open folder">
+              ＋
             </button>
           </div>
-          <label className="field-label" htmlFor="model-select">
-            Active model
-          </label>
-          <select
-            id="model-select"
-            value={state.selectedId ?? ''}
-            onChange={(event) => void selectModel(event.target.value)}
-            disabled={loading || models.length === 0}
-          >
-            <option value="">
-              {loading
-                ? 'Scanning Models…'
-                : models.length === 0
-                  ? 'No .gguf models found'
-                  : 'Choose a model…'}
-            </option>
-            {models.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.name}
-              </option>
-            ))}
-          </select>
-          <div className="helper-text">
-            Place local <code>.gguf</code> files in the <code>Models/</code> folder.
+          <div className="workspace-name">
+            ⌄ &nbsp; {workspace ? workspace.rootPath.split('/').pop() : 'NO FOLDER OPENED'}
           </div>
-          {selected && (
-            <div className="model-card">
-              <div className="model-card-title">{selected.name}</div>
-              <div className="model-meta">
-                <span>GGUF</span>
-                <span>{formatBytes(selected.sizeBytes)}</span>
-              </div>
-              <div className="model-path" title={selected.path}>
-                {selected.path}
-              </div>
+          {workspace ? (
+            <div className="file-tree">
+              {files.map((file) => {
+                const name = file.relativePath.split('/').pop() ?? file.relativePath;
+                return (
+                  <button
+                    className={activeFile === name ? 'tree-file selected' : 'tree-file'}
+                    key={file.relativePath}
+                    onClick={() => setActiveFile(name)}
+                  >
+                    <span className="file-icon">{fileIcon(name)}</span>
+                    <span>{name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="empty-explorer">
+              <span>◫</span>
+              <strong>Open a folder</strong>
+              <small>Load a project to start editing</small>
+              <button onClick={() => void chooseWorkspace()}>Open Folder</button>
             </div>
           )}
-          {state.error && <div className="error-box">{state.error}</div>}
-          <div className="sidebar-footer">
-            <span className="tiny-label">MODEL DIRECTORY</span>
-            <span className="directory">Models/</span>
+          <div className="explorer-footer">
+            <span className="tiny-label">MODEL</span>
+            <select
+              value={state.selectedId ?? ''}
+              onChange={(event) => void selectModel(event.target.value)}
+              disabled={loading || models.length === 0}
+            >
+              <option value="">{loading ? 'Scanning…' : 'Select model'}</option>
+              {models.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                </option>
+              ))}
+            </select>
+            {selected && (
+              <small>
+                {formatBytes(selected.sizeBytes)} · {selected.path}
+              </small>
+            )}
           </div>
         </aside>
-        <section className="main-panel">
-          <div className="welcome-card panel">
-            <div className="welcome-icon">✦</div>
-            <p className="eyebrow">WORKSPACE</p>
-            <h2>{workspace ? 'Project context is ready' : 'Build with your local model'}</h2>
-            <p>
-              {workspace
-                ? `Zap Ai Tool indexed ${workspace.files.length} safe entries from your project. Review the context below before starting a task.`
-                : 'Select a model and load a project. Zap Ai Tool will understand your project, propose changes, and wait for your approval before writing files.'}
-            </p>
-            <button
-              className="primary-button"
-              onClick={() => void chooseWorkspace()}
-              disabled={!selected || state.status === 'loading' || workspaceBusy}
-            >
-              {workspaceBusy ? 'Loading folder…' : 'Choose project folder'}
-            </button>
-          </div>
-          <div
-            className="drop-zone panel"
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={handleDrop}
-          >
-            <span className="drop-icon">⇩</span>
-            <div>
-              <strong>Drag and drop a project folder</strong>
-              <span>or choose a folder using the button above</span>
+        <section className="editor-area">
+          <div className="editor-tabs">
+            <div className="editor-tab active">
+              <span className="file-icon">{fileIcon(activeFile)}</span>
+              {activeFile}
+              <span className="tab-close">×</span>
+            </div>
+            <div className="editor-actions">
+              <button title="Split editor">▥</button>
+              <button title="More actions">•••</button>
             </div>
           </div>
-          {workspace && (
-            <div className="context-card panel">
-              <div className="context-heading">
-                <div>
-                  <p className="eyebrow">PROJECT CONTEXT</p>
-                  <h3 title={workspace.rootPath}>{workspace.rootPath}</h3>
+          <div className="editor-content">
+            <div className="breadcrumb">
+              src <span>/</span> renderer <span>/</span> <strong>{activeFile}</strong>
+            </div>
+            <div className="code-view">
+              {code.map((line, index) => (
+                <div className="code-line" key={`${activeFile}-${index}`}>
+                  <span className="line-number">{index + 1}</span>
+                  <code>{line || ' '}</code>
                 </div>
-                <span className="token-count">
-                  ~{workspace.estimatedTokens.toLocaleString()} tokens
-                </span>
-              </div>
-              <div className="context-files">
-                {visibleFiles.map((file) => (
-                  <div className="context-file" key={file.relativePath}>
-                    <span>◇</span>
-                    <span>{file.relativePath}</span>
-                    <span>{formatBytes(file.sizeBytes)}</span>
-                  </div>
-                ))}
-                {workspace.files.filter((file) => file.kind === 'file').length >
-                  visibleFiles.length && (
-                  <div className="context-more">
-                    +{' '}
-                    {workspace.files.filter((file) => file.kind === 'file').length -
-                      visibleFiles.length}{' '}
-                    more files
-                  </div>
-                )}
-              </div>
+              ))}
             </div>
-          )}
-          {workspaceError && <div className="error-box">{workspaceError}</div>}
-          <div className="module-row">
-            <div className="module-card panel">
-              <span className="module-number">01</span>
-              <h3>Model Management</h3>
-              <p>
-                {models.length} local model{models.length === 1 ? '' : 's'} discovered
-              </p>
+          </div>
+          <div className="terminal-panel">
+            <div className="terminal-tabs">
+              <span className="terminal-tab active">TERMINAL</span>
+              <span>OUTPUT</span>
+              <span>
+                PROBLEMS <b>0</b>
+              </span>
+              <span className="terminal-clear">⌃</span>
             </div>
-            <div className="module-card panel">
-              <span className="module-number">02</span>
-              <h3>Project Context</h3>
-              <p>
-                {workspace
-                  ? `${workspace.files.length} safe entries indexed`
-                  : 'Folder tree and instructions'}
-              </p>
-            </div>
-            <div className="module-card panel">
-              <span className="module-number">03</span>
-              <h3>Human Review</h3>
-              <p>Diffs before every change</p>
+            <div className="terminal-content">
+              <span className="terminal-prompt">zap@local</span>
+              <span className="terminal-path"> {workspace?.rootPath ?? '~/workspace'}</span>
+              <span className="terminal-cursor"> $ {activity}</span>
             </div>
           </div>
         </section>
-      </section>
+        <aside className="agent-panel">
+          <div className="agent-header">
+            <div>
+              <p className="eyebrow">ZAP AGENT</p>
+              <h2>AI pair programmer</h2>
+            </div>
+            <span className="agent-live">● LOCAL</span>
+          </div>
+          <div className="agent-context">
+            <span className="context-icon">✦</span>
+            <div>
+              <strong>Context ready</strong>
+              <small>
+                {files.length} files · ~{workspace?.estimatedTokens.toLocaleString() ?? '0'} tokens
+              </small>
+            </div>
+          </div>
+          <div className="agent-message">
+            <span className="agent-avatar">Z</span>
+            <div>
+              <strong>How can I help?</strong>
+              <p>
+                Ask me to inspect your code, explain a file, or draft a change. I’ll show a diff
+                before anything is written.
+              </p>
+            </div>
+          </div>
+          <div className="suggestion-list">
+            <button onClick={() => setPrompt('Explain this file and suggest improvements')}>
+              ⌁ <span>Explain this file</span>
+              <b>›</b>
+            </button>
+            <button onClick={() => setPrompt('Find and fix the next issue')}>
+              ⌁ <span>Find the next issue</span>
+              <b>›</b>
+            </button>
+            <button onClick={() => setPrompt('Add tests for this module')}>
+              ⌁ <span>Add tests for this module</span>
+              <b>›</b>
+            </button>
+          </div>
+          <div className="agent-composer">
+            <div className="mode-switch">
+              <button
+                className={agentMode === 'build' ? 'active' : ''}
+                onClick={() => setAgentMode('build')}
+              >
+                Build
+              </button>
+              <button
+                className={agentMode === 'ask' ? 'active' : ''}
+                onClick={() => setAgentMode('ask')}
+              >
+                Ask
+              </button>
+            </div>
+            <textarea
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  runPrompt();
+                }
+              }}
+              placeholder={
+                agentMode === 'build' ? 'Describe a change to make…' : 'Ask about your code…'
+              }
+            />
+            <div className="composer-footer">
+              <span>↵ to send · Shift+↵ for newline</span>
+              <button className="send-button" onClick={runPrompt} disabled={!prompt.trim()}>
+                ↑
+              </button>
+            </div>
+          </div>
+          <div className="agent-safety">
+            <span>✓</span>
+            <span>Changes require your approval</span>
+          </div>
+        </aside>
+      </div>
+      <footer className="statusbar">
+        <span>⎇ main</span>
+        <span>✓ 0 problems</span>
+        <span>UTF-8</span>
+        <span>TypeScript React</span>
+        <span className="statusbar-spacer" />
+        <span>Ln 1, Col 1</span>
+        <span>Spaces: 2</span>
+        <span>◉ Local workspace</span>
+      </footer>
+      <div
+        className="drop-catcher"
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={handleDrop}
+      />
+      {workspaceError && <div className="toast-error">{workspaceError}</div>}
     </main>
   );
 }

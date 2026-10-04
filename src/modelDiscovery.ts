@@ -1,5 +1,5 @@
 import { readdir, stat } from 'node:fs/promises';
-import { join, basename } from 'node:path';
+import { join } from 'node:path';
 import type { ModelDescriptor } from './domain.js';
 
 export async function discoverModels(modelsDirectory: string): Promise<ModelDescriptor[]> {
@@ -12,7 +12,7 @@ export async function discoverModels(modelsDirectory: string): Promise<ModelDesc
     const metadata = await stat(path);
     models.push({
       id: entry.name,
-      name: basename(entry.name, '.gguf'),
+      name: entry.name.slice(0, -'.gguf'.length),
       path,
       format: 'gguf',
       sizeBytes: metadata.size,
