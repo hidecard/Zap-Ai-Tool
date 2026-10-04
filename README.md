@@ -76,6 +76,8 @@ Put local GGUF files in `Models/` before launching the desktop shell. The settin
 
 For Windows and Linux installer builds, see [`docs/release.md`](./docs/release.md). A version tag such as `v0.3.2` publishes raw `.exe` and `.deb` files directly to a GitHub Release; it does not publish ZIP release assets.
 
+For Windows renderer and installation troubleshooting, see [`docs/troubleshooting.md`](./docs/troubleshooting.md).
+
 See [`Todo.md`](./Todo.md) for the tracked implementation roadmap.
 
 ## Suggested technology direction

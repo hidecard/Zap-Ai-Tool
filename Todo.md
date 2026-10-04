@@ -61,6 +61,6 @@
 - [ ] Benchmark model loading and context performance.
 - [x] Add Windows NSIS installer configuration and `npm run package:win` script.
 - [x] Add Linux x64 DEB configuration and `npm run package:deb` script.
-- [ ] Write user documentation and troubleshooting guides.
+- [x] Write user documentation and troubleshooting guides.
 - [x] Add GitHub Actions Windows EXE artifact workflow for version tags and manual runs.
 - [x] Publish raw `.exe` and `.deb` files directly to versioned GitHub Releases.
