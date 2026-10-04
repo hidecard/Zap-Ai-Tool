@@ -124,6 +124,8 @@ export function App(): ReactElement {
     'pending',
   );
   const [feedback, setFeedback] = useState('');
+  const [agentResponse, setAgentResponse] = useState('');
+  const [requestBusy, setRequestBusy] = useState(false);
   const [activityLog, setActivityLog] = useState<string[]>(['Workspace ready · local-only mode']);
   const [splitEditor, setSplitEditor] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -245,14 +247,54 @@ export function App(): ReactElement {
     before: "const mode = 'draft';\n",
     after: "const mode = 'approved';\nsetActivity('Ready for validation');\n",
   };
-  const runPrompt = (): void => {
+  const runPrompt = async (): Promise<void> => {
     if (!prompt.trim()) return;
     const request = prompt.trim();
-    setActivity(`Drafting a plan for: ${request}`);
+    if (!previewMode && state.status !== 'ready') {
+      setActivity('Select a model and wait until it is ready before sending a prompt.');
+      setActivityLog((items) => ['Prompt blocked · no ready model', ...items].slice(0, 5));
+      return;
+    }
+    setRequestBusy(true);
+    setAgentResponse('');
+    setActivity(`${agentMode === 'ask' ? 'Answering' : 'Planning'}: ${request}`);
     setActivityLog((items) => [`Agent started · ${request}`, ...items].slice(0, 5));
-    if (agentMode === 'build') {
-      setReviewDecision('pending');
-      setReviewOpen(true);
+    try {
+      if (previewMode) {
+        setAgentResponse(
+          'Preview mode is active. Launch the desktop app with a local llama-server and a GGUF model to receive a real response.',
+        );
+      } else {
+        const context = workspace
+          ? `Workspace: ${workspace.rootPath}\nIndexed files: ${workspace.files
+              .filter((file) => file.kind === 'file')
+              .slice(0, 80)
+              .map((file) => file.relativePath)
+              .join(', ')}`
+          : 'No workspace is open.';
+        const instruction =
+          agentMode === 'ask'
+            ? 'Answer the user clearly. Do not claim to have changed files or run commands.'
+            : 'Create a concise implementation plan. Do not claim files were changed; changes require a separate review/apply step.';
+        const result = await window.zap.complete(
+          `You are Zap, a local software engineering assistant.\n${instruction}\n${context}\n\nUser request:\n${request}`,
+          { maxTokens: 512, temperature: 0.2 },
+        );
+        setAgentResponse(result.content.trim());
+        setActivity(
+          `${agentMode === 'ask' ? 'Answer' : 'Plan'} ready · ${result.tokensPredicted ?? 0} tokens`,
+        );
+        setActivityLog((items) =>
+          [`${agentMode === 'ask' ? 'Answer' : 'Plan'} received`, ...items].slice(0, 5),
+        );
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setAgentResponse(`Model request failed: ${message}`);
+      setActivity('Model request failed.');
+      setActivityLog((items) => ['Model request failed', ...items].slice(0, 5));
+    } finally {
+      setRequestBusy(false);
     }
     setPrompt('');
   };
@@ -509,6 +551,12 @@ export function App(): ReactElement {
               </p>
             </div>
           </div>
+          {agentResponse && (
+            <div className="agent-response" aria-live="polite">
+              <span className="agent-avatar">Z</span>
+              <pre>{agentResponse}</pre>
+            </div>
+          )}
           <div className="suggestion-list">
             <button onClick={() => setPrompt('Explain this file and suggest improvements')}>
               ⌁ <span>Explain this file</span>
@@ -544,7 +592,7 @@ export function App(): ReactElement {
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey) {
                   event.preventDefault();
-                  runPrompt();
+                  void runPrompt();
                 }
               }}
               placeholder={
@@ -553,8 +601,12 @@ export function App(): ReactElement {
             />
             <div className="composer-footer">
               <span>↵ to send · Shift+↵ for newline</span>
-              <button className="send-button" onClick={runPrompt} disabled={!prompt.trim()}>
-                ↑
+              <button
+                className="send-button"
+                onClick={() => void runPrompt()}
+                disabled={!prompt.trim() || requestBusy}
+              >
+                {requestBusy ? '…' : '↑'}
               </button>
             </div>
           </div>
