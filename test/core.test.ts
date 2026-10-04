@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -9,6 +9,7 @@ import { isPathInsideWorkspace, validateToolCall } from '../src/permissions.js';
 import { createTask, transitionTask } from '../src/taskRunner.js';
 import { readWorkspaceFile, runApprovedTerminal } from '../src/tools.js';
 import { buildWorkspaceContext } from '../src/workspace.js';
+import { applyFileDiffs, rollbackFileDiffs } from '../src/patches.js';
 
 test('discovers and sorts GGUF models while ignoring other files', async () => {
   const root = await mkdtemp(join(tmpdir(), 'zap-models-'));
@@ -37,6 +38,52 @@ test('builds an ignore-aware workspace context', async () => {
   );
   assert.equal(context.instructions, 'Use strict TypeScript.');
   assert.ok(context.estimatedTokens > 0);
+});
+
+test('loads project instructions and configurable ignore patterns', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'zap-config-'));
+  await mkdir(join(root, 'notes'));
+  await writeFile(join(root, 'ZAP.md'), 'Prefer small safe changes.');
+  await writeFile(join(root, '.zapignore'), 'notes\nlocal.txt\n');
+  await writeFile(join(root, 'notes', 'private.md'), 'ignore');
+  await writeFile(join(root, 'local.txt'), 'ignore');
+  await writeFile(join(root, 'main.ts'), 'export {};');
+  const { loadWorkspaceOptions } = await import('../src/workspace.js');
+  const context = await buildWorkspaceContext(root, await loadWorkspaceOptions(root));
+  assert.equal(context.instructions, 'Prefer small safe changes.');
+  assert.deepEqual(
+    context.files.map((file) => file.relativePath),
+    ['.zapignore', 'ZAP.md', 'main.ts'],
+  );
+});
+
+test('applies diffs with a backup and restores them on rollback', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'zap-patches-'));
+  const file = join(root, 'app.ts');
+  await writeFile(file, 'const value = 1;\n');
+  const result = await applyFileDiffs(
+    root,
+    [{ path: 'app.ts', before: 'const value = 1;\n', after: 'const value = 2;\n' }],
+    'test-backup',
+  );
+  assert.equal(await readFile(file, 'utf8'), 'const value = 2;\n');
+  assert.deepEqual(result.changedFiles, ['app.ts']);
+  await rollbackFileDiffs(root, result.backupId);
+  assert.equal(await readFile(file, 'utf8'), 'const value = 1;\n');
+});
+
+test('blocks a stale patch when the current file differs from the draft', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'zap-conflict-'));
+  const file = join(root, 'app.ts');
+  await writeFile(file, 'const value = 3;\n');
+  await assert.rejects(
+    () =>
+      applyFileDiffs(root, [
+        { path: 'app.ts', before: 'const value = 1;\n', after: 'const value = 2;\n' },
+      ]),
+    /Patch conflict/,
+  );
+  assert.equal(await readFile(file, 'utf8'), 'const value = 3;\n');
 });
 
 test('keeps file access inside the selected workspace', () => {

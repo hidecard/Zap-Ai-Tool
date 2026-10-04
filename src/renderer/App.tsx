@@ -237,6 +237,14 @@ export function App(): ReactElement {
     '// Select a file to inspect its context.',
     '// Zap will keep your project local and safe.',
   ];
+  const activePath =
+    files.find((file) => file.relativePath.split('/').pop() === activeFile)?.relativePath ??
+    activeFile;
+  const proposedDiff = {
+    path: activePath,
+    before: "const mode = 'draft';\n",
+    after: "const mode = 'approved';\nsetActivity('Ready for validation');\n",
+  };
   const runPrompt = (): void => {
     if (!prompt.trim()) return;
     const request = prompt.trim();
@@ -248,7 +256,17 @@ export function App(): ReactElement {
     }
     setPrompt('');
   };
-  const decideReview = (decision: 'approved' | 'rejected'): void => {
+  const decideReview = async (decision: 'approved' | 'rejected'): Promise<void> => {
+    if (decision === 'approved' && !previewMode && workspace) {
+      try {
+        const result = await window.zap.applyPatches(workspace.rootPath, [proposedDiff]);
+        setActivity(`Approved change · backup ${result.backupId}`);
+      } catch (error) {
+        setActivity(`Patch blocked · ${error instanceof Error ? error.message : String(error)}`);
+        setActivityLog((items) => ['Patch blocked · no files changed', ...items].slice(0, 5));
+        return;
+      }
+    }
     setReviewDecision(decision);
     setReviewOpen(false);
     setActivity(
@@ -604,10 +622,10 @@ export function App(): ReactElement {
             <div className="review-footer">
               <span>Original files stay untouched until approval.</span>
               <div>
-                <button className="reject-button" onClick={() => decideReview('rejected')}>
+                <button className="reject-button" onClick={() => void decideReview('rejected')}>
                   Reject
                 </button>
-                <button className="approve-button" onClick={() => decideReview('approved')}>
+                <button className="approve-button" onClick={() => void decideReview('approved')}>
                   Approve &amp; Apply
                 </button>
               </div>

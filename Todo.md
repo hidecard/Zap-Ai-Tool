@@ -34,7 +34,7 @@
 - [x] Exclude secrets, build output, dependency folders, and oversized files by default.
 - [x] Add folder picker and drag-and-drop workspace loading.
 - [x] Build initial context preview and token-budget estimate UI.
-- [ ] Add project instructions and configurable ignore patterns.
+- [x] Add project instructions and configurable ignore patterns.
 
 ## Phase 4 — Autonomous Loop
 
@@ -47,11 +47,11 @@
 
 ## Phase 5 — Human-in-the-Loop
 
-- [ ] Build side-by-side old/new diff view.
+- [x] Build side-by-side old/new diff view.
 - [ ] Support file-by-file and hunk-by-hunk review.
-- [ ] Implement Approve, Reject, and feedback flows.
-- [ ] Apply approved patches atomically with backup/rollback support.
-- [ ] Show an activity timeline and task completion summary.
+- [x] Implement Approve, Reject, and feedback flows.
+- [x] Apply approved patches atomically with backup/rollback support.
+- [x] Show an activity timeline and task completion summary.
 
 ## Phase 6 — Quality & Release
 

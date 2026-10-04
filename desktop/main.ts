@@ -4,7 +4,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { discoverModels } from '../src/modelDiscovery.js';
 import { ModelManager } from '../src/modelManager.js';
-import { buildWorkspaceContext } from '../src/workspace.js';
+import { buildWorkspaceContext, loadWorkspaceOptions } from '../src/workspace.js';
+import { applyFileDiffs, rollbackFileDiffs } from '../src/patches.js';
+import type { FileDiff } from '../src/domain.js';
 
 const distributionDirectory = fileURLToPath(new URL('..', import.meta.url));
 const projectDirectory = fileURLToPath(new URL('../..', import.meta.url));
@@ -57,11 +59,19 @@ ipcMain.handle('workspace:choose', async () => {
   if (result.canceled || result.filePaths.length === 0) return null;
   const selectedPath = result.filePaths[0];
   if (!selectedPath) return null;
-  return buildWorkspaceContext(selectedPath);
+  return buildWorkspaceContext(selectedPath, await loadWorkspaceOptions(selectedPath));
 });
 
 ipcMain.handle('workspace:load', async (_event, rootPath: string) =>
-  buildWorkspaceContext(rootPath),
+  buildWorkspaceContext(rootPath, await loadWorkspaceOptions(rootPath)),
+);
+
+ipcMain.handle('patches:apply', async (_event, rootPath: string, diffs: FileDiff[]) =>
+  applyFileDiffs(rootPath, diffs),
+);
+
+ipcMain.handle('patches:rollback', async (_event, rootPath: string, backupId: string) =>
+  rollbackFileDiffs(rootPath, backupId),
 );
 
 app.whenReady().then(async () => {

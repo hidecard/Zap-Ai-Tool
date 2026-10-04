@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { ModelDescriptor, ModelManagerState, WorkspaceContext } from '../src/index.js';
+import type {
+  ModelDescriptor,
+  ModelManagerState,
+  WorkspaceContext,
+  FileDiff,
+} from '../src/index.js';
+import type { PatchApplyResult } from '../src/patches.js';
 
 contextBridge.exposeInMainWorld('zap', {
   listModels: (): Promise<{ models: ModelDescriptor[]; state: ModelManagerState }> =>
@@ -10,4 +16,8 @@ contextBridge.exposeInMainWorld('zap', {
   chooseWorkspace: (): Promise<WorkspaceContext | null> => ipcRenderer.invoke('workspace:choose'),
   loadWorkspace: (rootPath: string): Promise<WorkspaceContext> =>
     ipcRenderer.invoke('workspace:load', rootPath),
+  applyPatches: (rootPath: string, diffs: FileDiff[]): Promise<PatchApplyResult> =>
+    ipcRenderer.invoke('patches:apply', rootPath, diffs),
+  rollbackPatches: (rootPath: string, backupId: string): Promise<string[]> =>
+    ipcRenderer.invoke('patches:rollback', rootPath, backupId),
 });

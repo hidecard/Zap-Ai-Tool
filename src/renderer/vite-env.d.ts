@@ -1,4 +1,5 @@
-import type { ModelDescriptor, ModelManagerState, WorkspaceContext } from '../index.js';
+import type { FileDiff, ModelDescriptor, ModelManagerState, WorkspaceContext } from '../index.js';
+import type { PatchApplyResult } from '../patches.js';
 
 declare global {
   interface Window {
@@ -8,6 +9,8 @@ declare global {
       unloadModel(): Promise<ModelManagerState>;
       chooseWorkspace(): Promise<WorkspaceContext | null>;
       loadWorkspace(rootPath: string): Promise<WorkspaceContext>;
+      applyPatches(rootPath: string, diffs: FileDiff[]): Promise<PatchApplyResult>;
+      rollbackPatches(rootPath: string, backupId: string): Promise<string[]>;
     };
   }
 }
