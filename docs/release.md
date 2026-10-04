@@ -25,7 +25,7 @@ git tag v0.3.2
 git push origin v0.3.2
 ```
 
-The workflow runs two platform jobs in parallel. After both succeed, the release job creates or updates the GitHub Release and attaches the raw `.exe` and `.deb` files.
+The workflow runs two platform jobs in parallel. Each job runs type-checking and tests, then verifies that exactly one valid installer artifact was created. After both succeed, the release job creates or updates the GitHub Release and attaches the raw `.exe` and `.deb` files. Runs for the same tag are serialized so two releases cannot publish conflicting assets.
 
 A manual Actions run can validate builds and upload temporary workflow artifacts, but only a version tag publishes a GitHub Release.
 
@@ -39,3 +39,5 @@ npm run package:deb  # Linux
 ```
 
 Both commands write packages to `release/`. The Linux `.deb` build can run on Ubuntu. Windows NSIS packaging is guaranteed on the workflow's `windows-latest` runner. Release installers are currently unsigned; add code-signing secrets before public distribution if required.
+
+The installer does not bundle large GGUF models or a platform-specific `llama-server` binary. After installation, users must install llama.cpp for their platform, place GGUF files in the app's `Models/` directory, and configure `LLAMA_SERVER_PATH` when `llama-server` is not on `PATH`.

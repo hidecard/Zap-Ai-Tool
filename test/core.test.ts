@@ -258,6 +258,35 @@ server.listen(Number(process.argv[portIndex + 1]), '127.0.0.1');
   await runtime.unload();
 });
 
+test('serializes concurrent model selections and leaves the newest model ready', async () => {
+  const events: string[] = [];
+  const runtime = {
+    async load(model: { name: string }) {
+      events.push(`load:${model.name}`);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    },
+    async unload() {
+      events.push('unload');
+    },
+    async healthCheck() {
+      return { healthy: true, message: 'ready' };
+    },
+  };
+  const manager = new ModelManager(runtime);
+  const models = ['one', 'two'].map((name) => ({
+    id: `${name}.gguf`,
+    name,
+    path: `/models/${name}.gguf`,
+    format: 'gguf' as const,
+    sizeBytes: 1,
+    modifiedAt: '',
+  }));
+  manager.setAvailable(models);
+  await Promise.all([manager.select('one.gguf'), manager.select('two.gguf')]);
+  assert.deepEqual(events, ['load:one', 'unload', 'load:two']);
+  assert.equal(manager.getState().loadedId, 'two.gguf');
+});
+
 test('reports terminal cancellation and timeout instead of hanging', async () => {
   const root = await mkdtemp(join(tmpdir(), 'zap-cancel-'));
   const controller = new AbortController();

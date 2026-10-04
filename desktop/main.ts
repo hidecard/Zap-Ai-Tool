@@ -89,3 +89,11 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
+let quitting = false;
+app.on('before-quit', (event) => {
+  if (quitting) return;
+  event.preventDefault();
+  quitting = true;
+  void runtime.unload().finally(() => app.quit());
+});

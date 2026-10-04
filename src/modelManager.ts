@@ -15,6 +15,7 @@ export interface ModelManagerState {
 }
 
 export class ModelManager {
+  private operation: Promise<void> = Promise.resolve();
   private state: ModelManagerState = {
     available: [],
     selectedId: undefined,
@@ -34,6 +35,17 @@ export class ModelManager {
   }
 
   async select(modelId: string): Promise<ModelManagerState> {
+    let result: ModelManagerState | undefined;
+    this.operation = this.operation
+      .catch(() => undefined)
+      .then(async () => {
+        result = await this.selectInternal(modelId);
+      });
+    await this.operation;
+    return result ?? this.getState();
+  }
+
+  private async selectInternal(modelId: string): Promise<ModelManagerState> {
     const model = this.state.available.find((candidate) => candidate.id === modelId);
     if (!model) throw new Error(`Model not found: ${modelId}`);
     this.state = { ...this.state, selectedId: modelId, status: 'loading', error: undefined };

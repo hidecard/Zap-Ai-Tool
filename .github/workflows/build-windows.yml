@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   NODE_VERSION: 22
 
@@ -28,10 +32,17 @@ jobs:
         run: npm ci
       - name: Type-check
         run: npm run check
+      - name: Test core and runtime boundaries
+        run: npm test
       - name: Build Windows NSIS installer
         run: npm run package:win
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Verify Windows installer artifact
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem release -Filter *.exe
+          if ($files.Count -ne 1) { throw "Expected exactly one EXE, found $($files.Count)" }
       - name: Upload raw EXE build
         uses: actions/upload-artifact@v4
         with:
@@ -55,8 +66,15 @@ jobs:
         run: npm ci
       - name: Type-check
         run: npm run check
+      - name: Test core and runtime boundaries
+        run: npm test
       - name: Build Linux DEB package
         run: npm run package:deb
+      - name: Verify Debian package artifact
+        run: |
+          files=(release/*.deb)
+          test "${#files[@]}" -eq 1
+          dpkg-deb --info "${files[0]}" >/dev/null
       - name: Upload raw DEB build
         uses: actions/upload-artifact@v4
         with:
@@ -83,6 +101,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: Zap Ai Tool ${{ github.ref_name }}
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
             release-assets/*.exe
             release-assets/*.deb
