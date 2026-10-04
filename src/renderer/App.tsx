@@ -125,6 +125,8 @@ export function App(): ReactElement {
   );
   const [feedback, setFeedback] = useState('');
   const [activityLog, setActivityLog] = useState<string[]>(['Workspace ready · local-only mode']);
+  const [splitEditor, setSplitEditor] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const refreshModels = async (): Promise<void> => {
     setLoading(true);
@@ -223,8 +225,13 @@ export function App(): ReactElement {
           ? 'Needs attention'
           : 'No model loaded';
   const files = useMemo(
-    () => workspace?.files.filter((file) => file.kind === 'file') ?? [],
-    [workspace],
+    () =>
+      workspace?.files.filter(
+        (file) =>
+          file.kind === 'file' &&
+          file.relativePath.toLowerCase().includes(searchQuery.toLowerCase()),
+      ) ?? [],
+    [searchQuery, workspace],
   );
   const code = previewCode[activeFile] ?? [
     '// Select a file to inspect its context.',
@@ -315,7 +322,39 @@ export function App(): ReactElement {
           <div className="workspace-name">
             ⌄ &nbsp; {workspace ? workspace.rootPath.split('/').pop() : 'NO FOLDER OPENED'}
           </div>
-          {workspace ? (
+          {activeView === 'search' ? (
+            <div className="utility-panel">
+              <label>SEARCH PROJECT</label>
+              <input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search files…"
+              />
+              <small>{files.length} indexed files · local only</small>
+            </div>
+          ) : activeView === 'source' ? (
+            <div className="utility-panel">
+              <label>SOURCE CONTROL</label>
+              <div className="change-row">
+                <span>M</span>
+                <span>App.tsx</span>
+                <b>1</b>
+              </div>
+              <small>Changes are reviewable before apply.</small>
+            </div>
+          ) : activeView === 'settings' ? (
+            <div className="utility-panel">
+              <label>SETTINGS</label>
+              <div className="setting-row">
+                <span>Local-only mode</span>
+                <b>ON</b>
+              </div>
+              <div className="setting-row">
+                <span>Approval gate</span>
+                <b>ON</b>
+              </div>
+            </div>
+          ) : workspace ? (
             <div className="file-tree">
               {files.map((file) => {
                 const name = file.relativePath.split('/').pop() ?? file.relativePath;
@@ -365,24 +404,43 @@ export function App(): ReactElement {
             <div className="editor-tab active">
               <span className="file-icon">{fileIcon(activeFile)}</span>
               {activeFile}
-              <span className="tab-close">×</span>
+              <button
+                className="tab-close"
+                title="Close file"
+                onClick={() => setActiveFile(files[0]?.relativePath.split('/').pop() ?? 'App.tsx')}
+              >
+                ×
+              </button>
             </div>
             <div className="editor-actions">
-              <button title="Split editor">▥</button>
-              <button title="More actions">•••</button>
+              <button title="Split editor" onClick={() => setSplitEditor((value) => !value)}>
+                ▥
+              </button>
+              <button
+                title="More actions"
+                onClick={() => setActivity('Editor actions ready · no files changed')}
+              >
+                •••
+              </button>
             </div>
           </div>
           <div className="editor-content">
             <div className="breadcrumb">
               src <span>/</span> renderer <span>/</span> <strong>{activeFile}</strong>
             </div>
-            <div className="code-view">
+            <div className={splitEditor ? 'code-view split' : 'code-view'}>
               {code.map((line, index) => (
                 <div className="code-line" key={`${activeFile}-${index}`}>
                   <span className="line-number">{index + 1}</span>
                   <code>{line || ' '}</code>
                 </div>
               ))}
+              {splitEditor && (
+                <div className="split-preview">
+                  <span className="tiny-label">SIDE-BY-SIDE PREVIEW</span>
+                  <code>{code.slice(0, 5).join('\n')}</code>
+                </div>
+              )}
             </div>
           </div>
           <div className="terminal-panel">
