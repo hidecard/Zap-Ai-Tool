@@ -59,6 +59,7 @@ export async function buildWorkspaceContext(
   async function walk(directory: string): Promise<void> {
     if (files.length >= maxFiles) return;
     const entries = await readdir(directory, { withFileTypes: true });
+    entries.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
     for (const entry of entries) {
       if (files.length >= maxFiles) continue;
       const absolutePath = join(directory, entry.name);

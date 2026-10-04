@@ -25,6 +25,7 @@ export interface LlamaRuntimeOptions {
   startupTimeoutMs?: number;
   requestTimeoutMs?: number;
   extraArgs?: string[];
+  spawnProcess?: (command: string, args: string[]) => ChildProcess;
 }
 
 /**
@@ -39,6 +40,7 @@ export class LlamaServerRuntime implements ModelRuntime {
   private model: ModelDescriptor | undefined;
   private baseUrl: string;
   private stderr = '';
+  private readonly spawnProcess: (command: string, args: string[]) => ChildProcess;
   private readonly options: Required<
     Pick<
       LlamaRuntimeOptions,
@@ -48,6 +50,10 @@ export class LlamaServerRuntime implements ModelRuntime {
     LlamaRuntimeOptions;
 
   constructor(options: LlamaRuntimeOptions = {}) {
+    this.spawnProcess =
+      options.spawnProcess ??
+      ((command, args) =>
+        spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
     this.options = {
       host: options.host ?? '127.0.0.1',
       port: options.port ?? 8090,
@@ -78,7 +84,7 @@ export class LlamaServerRuntime implements ModelRuntime {
         : ['--n-gpu-layers', String(this.options.gpuLayers)]),
       ...(this.options.extraArgs ?? []),
     ];
-    const child = spawn(executable, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    const child = this.spawnProcess(executable, args);
     this.process = child;
     this.model = model;
     child.stderr?.on('data', (chunk: Buffer) => {

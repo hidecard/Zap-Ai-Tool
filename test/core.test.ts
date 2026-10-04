@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -240,7 +241,6 @@ test('reads workspace files and runs only approved terminal calls', async () => 
 
 test('connects to a llama-server-compatible runtime process', async () => {
   const root = await mkdtemp(join(tmpdir(), 'zap-llama-runtime-'));
-  const fakeServer = join(root, 'fake-llama-server.sh');
   const fakeNode = join(root, 'fake-llama-server.mjs');
   await writeFile(
     fakeNode,
@@ -254,11 +254,14 @@ const portIndex = process.argv.indexOf('--port');
 server.listen(Number(process.argv[portIndex + 1]), '127.0.0.1');
 `,
   );
-  await writeFile(fakeServer, `#!/bin/sh\nexec node ${JSON.stringify(fakeNode)} "$@"\n`);
-  await chmod(fakeServer, 0o755);
   const port = 18_090 + Math.floor(Math.random() * 100);
   const runtime = new LlamaServerRuntime({
-    executablePath: fakeServer,
+    executablePath: 'fake-llama-server',
+    spawnProcess: (_command, args) =>
+      spawn(process.execPath, [fakeNode, ...args], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      }),
     port,
     startupTimeoutMs: 2_000,
   });
