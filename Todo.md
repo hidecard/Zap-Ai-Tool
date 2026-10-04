@@ -28,6 +28,8 @@
 - [x] Add model runtime health checks and actionable error state.
 - [ ] Test with Llama, DeepSeek, and Qwen-compatible GGUF models.
 
+> The llama.cpp `llama-server` adapter and an opt-in real-GGUF smoke test are implemented. A tiny Llama3-compatible GGUF has been validated locally; the three-family compatibility matrix remains open.
+
 ## Phase 3 — Workspace & Context
 
 - [x] Add the ignore-aware workspace tree/context builder.

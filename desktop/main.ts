@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { discoverModels } from '../src/modelDiscovery.js';
 import { ModelManager } from '../src/modelManager.js';
+import { LlamaServerRuntime, type CompletionOptions } from '../src/llamaRuntime.js';
 import { buildWorkspaceContext, loadWorkspaceOptions } from '../src/workspace.js';
 import { applyFileDiffs, rollbackFileDiffs } from '../src/patches.js';
 import type { FileDiff } from '../src/domain.js';
@@ -14,15 +15,10 @@ const modelsDirectory = app.isPackaged
   ? join(process.resourcesPath, 'Models')
   : join(projectDirectory, 'Models');
 
-const runtime = {
-  async load(): Promise<void> {
-    // The llama.cpp adapter will be plugged in during the model runtime phase.
-  },
-  async unload(): Promise<void> {},
-  async healthCheck(): Promise<{ healthy: boolean; message: string }> {
-    return { healthy: true, message: 'Model selected; runtime adapter ready for integration.' };
-  },
-};
+const runtime = new LlamaServerRuntime({
+  ...(process.env.LLAMA_SERVER_PATH ? { executablePath: process.env.LLAMA_SERVER_PATH } : {}),
+  ...(process.env.LLAMA_GPU_LAYERS ? { gpuLayers: Number(process.env.LLAMA_GPU_LAYERS) } : {}),
+});
 const modelManager = new ModelManager(runtime);
 
 async function createWindow(): Promise<void> {
@@ -53,6 +49,10 @@ ipcMain.handle('models:select', async (_event, modelId: string) => {
 });
 
 ipcMain.handle('models:unload', async () => modelManager.unload());
+
+ipcMain.handle('models:complete', async (_event, prompt: string, options?: CompletionOptions) => {
+  return runtime.complete(prompt, options);
+});
 
 ipcMain.handle('workspace:choose', async () => {
   const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });

@@ -74,7 +74,11 @@ npm run build
 npm run desktop
 ```
 
-Put local GGUF files in `Models/` before launching the desktop shell. The settings dropdown scans this directory on startup. The current runtime adapter is a safe integration boundary; connecting llama.cpp is tracked separately in `Todo.md`.
+Put local GGUF files in `Models/` before launching the desktop shell. The settings dropdown scans this directory on startup.
+
+The desktop runtime now launches the official `llama-server` binary for the selected GGUF model, waits for `GET /health`, and sends completions to `POST /completion`. Install a compatible llama.cpp build and either put `llama-server` on `PATH` or set `LLAMA_SERVER_PATH` (and optionally `LLAMA_GPU_LAYERS`) before starting the app.
+
+For a real model smoke test, run `LLAMA_SERVER_PATH=/path/to/llama-server GGUF_MODEL_PATH=/path/to/model.gguf npm test`. Without those variables, the real-model test is skipped while the fake-server adapter test still runs.
 
 For Windows and Linux installer builds, see [`docs/release.md`](./docs/release.md). A version tag such as `v0.3.2` publishes raw `.exe` and `.deb` files directly to a GitHub Release; it does not publish ZIP release assets.
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -11,6 +11,7 @@ import { readWorkspaceFile, runApprovedTerminal } from '../src/tools.js';
 import { buildWorkspaceContext } from '../src/workspace.js';
 import { applyFileDiffs, rollbackFileDiffs } from '../src/patches.js';
 import { createFileReviews, selectReviewedDiffs } from '../src/review.js';
+import { LlamaServerRuntime } from '../src/llamaRuntime.js';
 
 test('discovers and sorts GGUF models while ignoring other files', async () => {
   const root = await mkdtemp(join(tmpdir(), 'zap-models-'));
@@ -202,6 +203,46 @@ test('reads workspace files and runs only approved terminal calls', async () => 
   assert.equal(result.exitCode, 0);
   assert.equal(result.timedOut, false);
   assert.equal(result.cancelled, false);
+});
+
+test('connects to a llama-server-compatible runtime process', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'zap-llama-runtime-'));
+  const fakeServer = join(root, 'fake-llama-server.sh');
+  const fakeNode = join(root, 'fake-llama-server.mjs');
+  await writeFile(
+    fakeNode,
+    `import http from 'node:http';
+const server = http.createServer((request, response) => {
+  if (request.url === '/health') { response.writeHead(200, {'content-type': 'application/json'}); response.end('{"status":"ok"}'); return; }
+  if (request.url === '/completion') { response.setHeader('content-type', 'application/json'); let body = ''; request.on('data', chunk => body += chunk); request.on('end', () => response.end(JSON.stringify({content: ' fake completion', tokens_predicted: 2, timings: {predicted_ms: 1}}))); return; }
+  response.writeHead(404); response.end();
+});
+const portIndex = process.argv.indexOf('--port');
+server.listen(Number(process.argv[portIndex + 1]), '127.0.0.1');
+`,
+  );
+  await writeFile(fakeServer, `#!/bin/sh\nexec node ${JSON.stringify(fakeNode)} "$@"\n`);
+  await chmod(fakeServer, 0o755);
+  const port = 18_090 + Math.floor(Math.random() * 100);
+  const runtime = new LlamaServerRuntime({
+    executablePath: fakeServer,
+    port,
+    startupTimeoutMs: 2_000,
+  });
+  await runtime.load({
+    id: 'fixture.gguf',
+    name: 'Fixture',
+    path: join(root, 'fixture.gguf'),
+    format: 'gguf',
+    sizeBytes: 1,
+    modifiedAt: '',
+  });
+  assert.deepEqual(await runtime.healthCheck(), {
+    healthy: true,
+    message: 'llama-server is ready.',
+  });
+  assert.equal((await runtime.complete('hello')).content, ' fake completion');
+  await runtime.unload();
 });
 
 test('reports terminal cancellation and timeout instead of hanging', async () => {
