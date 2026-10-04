@@ -23,6 +23,7 @@
   "build": {
     "appId": "com.zapai.tool",
     "productName": "Zap Ai Tool",
+    "desktopName": "zap-ai-tool",
     "artifactName": "Zap-Ai-Tool-${version}-${os}-${arch}.${ext}",
     "asar": true,
     "directories": {
@@ -59,6 +60,7 @@
       "shortcutName": "Zap Ai Tool"
     },
     "linux": {
+      "syncDesktopName": true,
       "target": [
         {
           "target": "deb",
