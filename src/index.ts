@@ -9,3 +9,4 @@ export * from './tools.js';
 export * from './workspace.js';
 export * from './review.js';
 export * from './llamaRuntime.js';
+export * from './diffProposal.js';

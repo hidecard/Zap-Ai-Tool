@@ -12,6 +12,7 @@ import { buildWorkspaceContext } from '../src/workspace.js';
 import { applyFileDiffs, rollbackFileDiffs } from '../src/patches.js';
 import { createFileReviews, selectReviewedDiffs } from '../src/review.js';
 import { LlamaServerRuntime } from '../src/llamaRuntime.js';
+import { parseFileDiffProposal } from '../src/diffProposal.js';
 
 test('discovers and sorts GGUF models while ignoring other files', async () => {
   const root = await mkdtemp(join(tmpdir(), 'zap-models-'));
@@ -144,6 +145,18 @@ test('keeps file access inside the selected workspace', () => {
     '/tmp/project',
   );
   assert.equal(read.allowed, true);
+});
+
+test('parses only strict file diff proposals from model output', () => {
+  assert.deepEqual(
+    parseFileDiffProposal('```json\n{"path":"app.ts","before":"old","after":"new"}\n```', 'app.ts'),
+    { path: 'app.ts', before: 'old', after: 'new' },
+  );
+  assert.equal(
+    parseFileDiffProposal('{"path":"other.ts","before":"old","after":"new"}', 'app.ts'),
+    undefined,
+  );
+  assert.equal(parseFileDiffProposal('I changed the file for you.', 'app.ts'), undefined);
 });
 
 test('switches models safely and reports runtime health', async () => {

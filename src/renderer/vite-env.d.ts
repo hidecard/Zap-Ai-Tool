@@ -11,6 +11,7 @@ declare global {
       complete(prompt: string, options?: CompletionOptions): Promise<CompletionResult>;
       chooseWorkspace(): Promise<WorkspaceContext | null>;
       loadWorkspace(rootPath: string): Promise<WorkspaceContext>;
+      readWorkspaceFile(rootPath: string, filePath: string): Promise<string>;
       applyPatches(rootPath: string, diffs: FileDiff[]): Promise<PatchApplyResult>;
       rollbackPatches(rootPath: string, backupId: string): Promise<string[]>;
     };

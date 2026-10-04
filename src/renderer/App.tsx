@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type DragEvent, type ReactElement } from 'react';
-import type { ModelDescriptor, ModelManagerState, WorkspaceContext } from '../index.js';
+import type { FileDiff, ModelDescriptor, ModelManagerState, WorkspaceContext } from '../index.js';
+import { parseFileDiffProposal } from '../diffProposal.js';
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024 ** 2) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -126,6 +127,7 @@ export function App(): ReactElement {
   const [feedback, setFeedback] = useState('');
   const [agentResponse, setAgentResponse] = useState('');
   const [requestBusy, setRequestBusy] = useState(false);
+  const [proposedDiff, setProposedDiff] = useState<FileDiff | null>(null);
   const [activityLog, setActivityLog] = useState<string[]>(['Workspace ready · local-only mode']);
   const [splitEditor, setSplitEditor] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -242,11 +244,6 @@ export function App(): ReactElement {
   const activePath =
     files.find((file) => file.relativePath.split('/').pop() === activeFile)?.relativePath ??
     activeFile;
-  const proposedDiff = {
-    path: activePath,
-    before: "const mode = 'draft';\n",
-    after: "const mode = 'approved';\nsetActivity('Ready for validation');\n",
-  };
   const runPrompt = async (): Promise<void> => {
     if (!prompt.trim()) return;
     const request = prompt.trim();
@@ -272,12 +269,18 @@ export function App(): ReactElement {
               .map((file) => file.relativePath)
               .join(', ')}`
           : 'No workspace is open.';
+        let before: string | undefined;
+        if (agentMode === 'build' && workspace && !previewMode) {
+          before = await window.zap.readWorkspaceFile(workspace.rootPath, activePath);
+        }
         const instruction =
           agentMode === 'ask'
             ? 'Answer the user clearly. Do not claim to have changed files or run commands.'
-            : 'Create a concise implementation plan. Do not claim files were changed; changes require a separate review/apply step.';
+            : `Return ONLY a JSON object with exactly these string fields: {"path":"${activePath}","before":"<current file>","after":"<complete replacement>"}. Use the supplied current file exactly in before. Do not use Markdown fences or extra text.`;
         const result = await window.zap.complete(
-          `You are Zap, a local software engineering assistant.\n${instruction}\n${context}\n\nUser request:\n${request}`,
+          `You are Zap, a local software engineering assistant.\n${instruction}\n${context}${
+            before === undefined ? '' : `\n\nCurrent file (${activePath}):\n${before}`
+          }\n\nUser request:\n${request}`,
           { maxTokens: 512, temperature: 0.2 },
         );
         setAgentResponse(result.content.trim());
@@ -287,6 +290,18 @@ export function App(): ReactElement {
         setActivityLog((items) =>
           [`${agentMode === 'ask' ? 'Answer' : 'Plan'} received`, ...items].slice(0, 5),
         );
+        if (agentMode === 'build' && before !== undefined) {
+          const proposal = parseFileDiffProposal(result.content, activePath);
+          if (!proposal || proposal.before !== before) {
+            setActivity('Model returned no safe file proposal; nothing to review.');
+            setActivityLog((items) => ['No safe diff · no files changed', ...items].slice(0, 5));
+          } else {
+            setProposedDiff(proposal);
+            setReviewDecision('pending');
+            setReviewOpen(true);
+            setActivity('Draft ready · review required before apply.');
+          }
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -299,7 +314,7 @@ export function App(): ReactElement {
     setPrompt('');
   };
   const decideReview = async (decision: 'approved' | 'rejected'): Promise<void> => {
-    if (decision === 'approved' && !previewMode && workspace) {
+    if (decision === 'approved' && !previewMode && workspace && proposedDiff) {
       try {
         const result = await window.zap.applyPatches(workspace.rootPath, [proposedDiff]);
         setActivity(`Approved change · backup ${result.backupId}`);
@@ -632,7 +647,7 @@ export function App(): ReactElement {
         onDrop={handleDrop}
       />
       {workspaceError && <div className="toast-error">{workspaceError}</div>}
-      {reviewOpen && (
+      {reviewOpen && proposedDiff && (
         <div className="review-backdrop" role="presentation" onClick={() => setReviewOpen(false)}>
           <section
             className="review-dialog"
@@ -644,26 +659,22 @@ export function App(): ReactElement {
             <div className="review-header">
               <div>
                 <p className="eyebrow">PROPOSED CHANGE · REVIEW REQUIRED</p>
-                <h2 id="review-title">Update {activeFile}</h2>
+                <h2 id="review-title">Update {proposedDiff.path}</h2>
               </div>
               <button onClick={() => setReviewOpen(false)}>×</button>
             </div>
             <div className="diff-meta">
-              <span>src/renderer/{activeFile}</span>
-              <span className="diff-count">+2 −1</span>
+              <span>{proposedDiff.path}</span>
+              <span className="diff-count">Review before apply</span>
             </div>
             <div className="diff-view">
               <div className="diff-line removed">
                 <span>−</span>
-                <code>const mode = 'draft';</code>
+                <code>{proposedDiff.before}</code>
               </div>
               <div className="diff-line added">
                 <span>+</span>
-                <code>const mode = 'approved';</code>
-              </div>
-              <div className="diff-line added">
-                <span>+</span>
-                <code>setActivity('Ready for validation');</code>
+                <code>{proposedDiff.after}</code>
               </div>
             </div>
             <textarea

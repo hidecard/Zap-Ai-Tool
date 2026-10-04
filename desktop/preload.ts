@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('zap', {
   chooseWorkspace: (): Promise<WorkspaceContext | null> => ipcRenderer.invoke('workspace:choose'),
   loadWorkspace: (rootPath: string): Promise<WorkspaceContext> =>
     ipcRenderer.invoke('workspace:load', rootPath),
+  readWorkspaceFile: (rootPath: string, filePath: string): Promise<string> =>
+    ipcRenderer.invoke('workspace:read-file', rootPath, filePath),
   applyPatches: (rootPath: string, diffs: FileDiff[]): Promise<PatchApplyResult> =>
     ipcRenderer.invoke('patches:apply', rootPath, diffs),
   rollbackPatches: (rootPath: string, backupId: string): Promise<string[]> =>

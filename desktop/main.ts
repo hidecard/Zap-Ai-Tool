@@ -7,6 +7,7 @@ import { ModelManager } from '../src/modelManager.js';
 import { LlamaServerRuntime, type CompletionOptions } from '../src/llamaRuntime.js';
 import { buildWorkspaceContext, loadWorkspaceOptions } from '../src/workspace.js';
 import { applyFileDiffs, rollbackFileDiffs } from '../src/patches.js';
+import { readWorkspaceFile } from '../src/tools.js';
 import type { FileDiff } from '../src/domain.js';
 
 const distributionDirectory = fileURLToPath(new URL('..', import.meta.url));
@@ -64,6 +65,10 @@ ipcMain.handle('workspace:choose', async () => {
 
 ipcMain.handle('workspace:load', async (_event, rootPath: string) =>
   buildWorkspaceContext(rootPath, await loadWorkspaceOptions(rootPath)),
+);
+
+ipcMain.handle('workspace:read-file', async (_event, rootPath: string, filePath: string) =>
+  readWorkspaceFile(rootPath, filePath),
 );
 
 ipcMain.handle('patches:apply', async (_event, rootPath: string, diffs: FileDiff[]) =>
