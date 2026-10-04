@@ -74,13 +74,13 @@ npm run build
 npm run desktop
 ```
 
-Put local GGUF files in `Models/` before launching the desktop shell. The settings dropdown scans this directory on startup.
+Put local GGUF files in `Models/` before launching the desktop app in development. In an installed app, Zap stores and scans models in its per-user application data folder so a standard Windows account can use models without administrator access.
 
 The desktop runtime now launches the official `llama-server` binary for the selected GGUF model, waits for `GET /health`, and sends completions to `POST /completion`. Install a compatible llama.cpp build and either put `llama-server` on `PATH` or set `LLAMA_SERVER_PATH` (and optionally `LLAMA_GPU_LAYERS`) before starting the app.
 
 For a real model smoke test, run `LLAMA_SERVER_PATH=/path/to/llama-server GGUF_MODEL_PATH=/path/to/model.gguf npm test`. Without those variables, the real-model test is skipped while the fake-server adapter test still runs.
 
-For Windows and Linux installer builds, see [`docs/release.md`](./docs/release.md). A version tag such as `v0.3.2` publishes raw `.exe` and `.deb` files directly to a GitHub Release; it does not publish ZIP release assets.
+For Windows and Linux installer builds, see [`docs/release.md`](./docs/release.md). A version tag such as `vX.Y.Z` publishes raw `.exe` and `.deb` files directly to a GitHub Release; it does not publish ZIP release assets. Windows builds are not code-signed yet, so Microsoft SmartScreen may still show an unknown-publisher warning until a trusted signing certificate is configured.
 
 The backend safety assumptions and residual risks are documented in [`docs/threat-model.md`](./docs/threat-model.md).
 

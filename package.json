@@ -1,6 +1,6 @@
 {
   "name": "zap-ai-tool",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "private": true,
   "description": "Local-first, model-agnostic AI software engineer desktop app",
   "type": "module",
@@ -54,6 +54,8 @@
     },
     "nsis": {
       "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "shortcutName": "Zap Ai Tool"

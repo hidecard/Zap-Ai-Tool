@@ -8,11 +8,9 @@ The repository is configured with `base: './'` in `vite.config.ts`, so new build
 
 ### Fix
 
-1. Pull the latest `main` branch.
-2. Run `npm ci`.
-3. Run `npm run check` and `npm test`.
-4. Build or download a fresh Windows installer. An older installed build will not update itself.
-5. Uninstall the old build if Windows keeps launching its previous shortcut, then install the new `Zap-Ai-Tool-*.exe`.
+1. Download the latest `Zap-Ai-Tool-*.exe` release.
+2. Install it for the current user using the default install folder (`%LOCALAPPDATA%\Programs`). The installer does not require administrator privileges.
+3. Uninstall the old build if Windows keeps launching its previous shortcut, then install the new version.
 
 ### Verify the build
 
@@ -25,9 +23,16 @@ After `npm run build`, confirm that `dist/renderer/index.html` references assets
 
 Absolute `/assets/...` paths are not valid for the packaged Electron `file://` renderer.
 
+## Windows says the app is from an unknown publisher
+
+The Windows installer is currently unsigned. Microsoft SmartScreen can show an unknown-publisher warning and require **More info → Run anyway** (wording may vary by Windows version). This warning cannot be reliably removed by changing installer settings; a trusted code-signing certificate and signed release are required. Do not bypass the warning unless you downloaded the installer from the official Zap Ai Tool GitHub Releases page and trust the source.
+
 ## No local models found
 
-Place one or more `.gguf` files in the `Models/` directory next to the application source before launching the desktop app. The Settings panel only lists `.gguf` files and ignores other file types.
+- In development, place `.gguf` files in the repository's `Models/` directory.
+- In an installed app, place `.gguf` files in the app's per-user application data `Models/` directory (on Windows, beneath `%APPDATA%` in the Zap Ai Tool folder).
+
+Packaged builds now keep models outside the installation folder so users can run normally without administrator permissions. Models are not bundled in the installer.
 
 ## Workspace cannot be loaded
 

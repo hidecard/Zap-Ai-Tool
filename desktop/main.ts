@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveModelsDirectory } from '../src/appPaths.js';
 import { discoverModels } from '../src/modelDiscovery.js';
 import { ModelManager } from '../src/modelManager.js';
 import { LlamaServerRuntime, type CompletionOptions } from '../src/llamaRuntime.js';
@@ -12,9 +13,11 @@ import type { FileDiff } from '../src/domain.js';
 
 const distributionDirectory = fileURLToPath(new URL('..', import.meta.url));
 const projectDirectory = fileURLToPath(new URL('../..', import.meta.url));
-const modelsDirectory = app.isPackaged
-  ? join(process.resourcesPath, 'Models')
-  : join(projectDirectory, 'Models');
+const modelsDirectory = resolveModelsDirectory({
+  isPackaged: app.isPackaged,
+  projectDirectory,
+  userDataDirectory: app.getPath('userData'),
+});
 
 const runtime = new LlamaServerRuntime({
   ...(process.env.LLAMA_SERVER_PATH ? { executablePath: process.env.LLAMA_SERVER_PATH } : {}),

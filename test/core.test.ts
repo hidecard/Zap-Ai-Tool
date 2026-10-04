@@ -13,6 +13,26 @@ import { applyFileDiffs, rollbackFileDiffs } from '../src/patches.js';
 import { createFileReviews, selectReviewedDiffs } from '../src/review.js';
 import { LlamaServerRuntime } from '../src/llamaRuntime.js';
 import { parseFileDiffProposal } from '../src/diffProposal.js';
+import { resolveModelsDirectory } from '../src/appPaths.js';
+
+test('stores packaged models in user data, not the protected install directory', () => {
+  assert.equal(
+    resolveModelsDirectory({
+      isPackaged: true,
+      projectDirectory: 'C:\\Program Files\\Zap Ai Tool',
+      userDataDirectory: 'C:\\Users\\Alice\\AppData\\Roaming\\zap-ai-tool',
+    }),
+    join('C:\\Users\\Alice\\AppData\\Roaming\\zap-ai-tool', 'Models'),
+  );
+  assert.equal(
+    resolveModelsDirectory({
+      isPackaged: false,
+      projectDirectory: '/workspace/zap',
+      userDataDirectory: '/home/alice/.config/zap-ai-tool',
+    }),
+    join('/workspace/zap', 'Models'),
+  );
+});
 
 test('discovers and sorts GGUF models while ignoring other files', async () => {
   const root = await mkdtemp(join(tmpdir(), 'zap-models-'));
