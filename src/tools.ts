@@ -1,7 +1,8 @@
 import { readFile, realpath } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
-import { resolve } from 'node:path';
+import { relative, resolve } from 'node:path';
 import { isPathInsideWorkspace, validateToolCall } from './permissions.js';
+import { isProtectedWorkspacePath } from './pathSafety.js';
 import type { ToolCall } from './domain.js';
 
 export async function readWorkspaceFile(
@@ -10,12 +11,20 @@ export async function readWorkspaceFile(
   maxBytes = 512_000,
 ): Promise<string> {
   const absolutePath = resolve(workspaceRoot, filePath);
+  const requestedRelative = relative(resolve(workspaceRoot), absolutePath);
+  if (
+    !isPathInsideWorkspace(workspaceRoot, absolutePath) ||
+    isProtectedWorkspacePath(requestedRelative)
+  )
+    throw new Error('File reads are blocked outside the workspace or for protected paths.');
   const [realWorkspaceRoot, realFilePath] = await Promise.all([
     realpath(workspaceRoot),
     realpath(absolutePath),
   ]);
   if (!isPathInsideWorkspace(realWorkspaceRoot, realFilePath))
     throw new Error('File reads must stay inside the selected workspace.');
+  if (isProtectedWorkspacePath(relative(realWorkspaceRoot, realFilePath)))
+    throw new Error('File reads are blocked for protected paths.');
   const content = await readFile(realFilePath, 'utf8');
   if (Buffer.byteLength(content, 'utf8') > maxBytes)
     throw new Error(`File exceeds the ${maxBytes}-byte read limit.`);

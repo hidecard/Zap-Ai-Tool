@@ -1,9 +1,9 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import type { WorkspaceContext, WorkspaceFile } from './domain.js';
+import { isProtectedWorkspacePath } from './pathSafety.js';
 
 const DEFAULT_IGNORES = new Set(['.git', 'node_modules', 'dist', 'build', 'target', '.DS_Store']);
-const SECRET_NAMES = new Set(['.env', '.env.local', 'id_rsa', 'id_ed25519']);
 
 export interface WorkspaceOptions {
   instructions?: string;
@@ -66,7 +66,7 @@ export async function buildWorkspaceContext(
       const relativePath = relative(rootPath, absolutePath).replaceAll('\\', '/');
       if (
         DEFAULT_IGNORES.has(entry.name) ||
-        SECRET_NAMES.has(entry.name) ||
+        isProtectedWorkspacePath(relativePath) ||
         matchesIgnore(relativePath, entry.name, projectIgnores)
       )
         continue;

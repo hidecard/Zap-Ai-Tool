@@ -5,6 +5,7 @@ import type {
   WorkspaceContext,
   FileDiff,
 } from '../src/index.js';
+import type { AgentRunResult } from '../src/agentRunner.js';
 import type { PatchApplyResult } from '../src/patches.js';
 import type { CompletionOptions, CompletionResult } from '../src/llamaRuntime.js';
 import type { AppSettings } from '../src/settings.js';
@@ -18,6 +19,8 @@ contextBridge.exposeInMainWorld('zap', {
   unloadModel: (): Promise<ModelManagerState> => ipcRenderer.invoke('models:unload'),
   complete: (prompt: string, options?: CompletionOptions): Promise<CompletionResult> =>
     ipcRenderer.invoke('models:complete', prompt, options),
+  runAgentTask: (rootPath: string, instruction: string): Promise<AgentRunResult> =>
+    ipcRenderer.invoke('agent:run', rootPath, instruction),
   chooseWorkspace: (): Promise<WorkspaceContext | null> => ipcRenderer.invoke('workspace:choose'),
   loadWorkspace: (rootPath: string): Promise<WorkspaceContext> =>
     ipcRenderer.invoke('workspace:load', rootPath),

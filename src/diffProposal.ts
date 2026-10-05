@@ -1,4 +1,5 @@
 import type { FileDiff } from './domain.js';
+import { isProtectedWorkspacePath } from './pathSafety.js';
 
 function parseCandidate(raw: string): unknown {
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
@@ -41,20 +42,7 @@ function normalizeProposalPath(value: string): string | undefined {
     path.split('/').some((part) => part === '' || part === '.' || part === '..')
   )
     return undefined;
-  const segments = path.split('/');
-  const basename = segments.at(-1)?.toLowerCase() ?? '';
-  if (
-    segments.some((segment) =>
-      ['.zap-backups', '.git', 'node_modules', 'dist', 'build', 'target'].includes(
-        segment.toLowerCase(),
-      ),
-    ) ||
-    basename === '.env' ||
-    basename.startsWith('.env.') ||
-    basename === 'id_rsa' ||
-    basename === 'id_ed25519'
-  )
-    return undefined;
+  if (isProtectedWorkspacePath(path)) return undefined;
   return path;
 }
 

@@ -49,7 +49,7 @@
 - [x] Capture stdout, stderr, exit codes, and duration for each command.
 - [x] Add bounded self-correction retry accounting to the task state machine.
 
-> The current UI exposes a user-entered terminal, not model-generated tool calls. Automatic test execution, tool approval prompts, and autonomous self-correction are not yet connected to Build mode.
+> The new Agent mode connects model-generated structured actions to bounded file reads, exact-command native approval, terminal result feedback, stale-proposal validation, and bounded correction. Build mode remains a single completion request and does not invoke tools.
 
 ## Phase 5 — Human-in-the-Loop
 
@@ -79,6 +79,12 @@
 - [x] Connect a user-invoked terminal to the selected workspace, including Windows shell support.
 - [x] Display real command output and session activity instead of placeholder terminal text.
 - [x] Support up to eight existing/new-file proposals in a transaction with rollback.
+- [x] Connect model-generated Agent actions to local GGUF completions, protected file reads, and the task state machine.
+- [x] Require explicit per-command native approval and feed bounded terminal results back to the local model.
+- [x] Validate generated proposals against current disk state and return them to the human review flow without writing files.
+- [x] Bound Agent reads, command attempts, model steps, retry count, context size, and total run time.
 - [ ] Add read/write manual editor mode.
-- [ ] Connect model-generated tool calls to approval, validation, and bounded self-correction.
+- [ ] Add user cancellation/progress events during an in-flight Agent task.
+- [ ] Add sandboxed terminal execution and configurable command allow-list.
+- [ ] Add hosted AI provider integrations (currently the Agent uses the local llama.cpp runtime).
 - [ ] Add full-text project search and an actual Git status/diff integration.

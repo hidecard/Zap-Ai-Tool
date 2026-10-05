@@ -174,7 +174,7 @@ export function App(): ReactElement {
   const [fileError, setFileError] = useState<string | undefined>();
   const [activeView, setActiveView] = useState('explorer');
   const [prompt, setPrompt] = useState('');
-  const [agentMode, setAgentMode] = useState<'build' | 'ask'>('build');
+  const [agentMode, setAgentMode] = useState<'build' | 'ask' | 'agent'>('build');
   const [activity, setActivity] = useState('Ready for your next task.');
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewDecision, setReviewDecision] = useState<'pending' | 'approved' | 'rejected'>(
@@ -203,6 +203,7 @@ export function App(): ReactElement {
   const [terminalTab, setTerminalTab] = useState<'terminal' | 'output'>('terminal');
   const [changeHistory, setChangeHistory] = useState<{ backupId: string; files: string[] }[]>([]);
   const [lastBuildRequest, setLastBuildRequest] = useState('');
+  const [lastDraftMode, setLastDraftMode] = useState<'build' | 'agent'>('build');
 
   const refreshModels = async (): Promise<void> => {
     setLoading(true);
@@ -282,7 +283,7 @@ export function App(): ReactElement {
   }, [activeFile, previewMode, workspace?.rootPath]);
 
   const selectModel = async (modelId: string): Promise<void> => {
-    if (!modelId) return;
+    if (requestBusy || !modelId) return;
     if (previewMode) {
       setState({ ...createPreviewState(modelId), status: 'loading', loadedId: undefined });
       window.setTimeout(() => setState(createPreviewState(modelId)), 450);
@@ -306,6 +307,7 @@ export function App(): ReactElement {
   };
 
   const loadWorkspace = async (rootPath: string): Promise<void> => {
+    if (requestBusy || workspaceBusy) return;
     setWorkspaceBusy(true);
     setWorkspaceError(undefined);
     try {
@@ -322,6 +324,7 @@ export function App(): ReactElement {
     }
   };
   const chooseWorkspace = async (): Promise<void> => {
+    if (requestBusy || workspaceBusy) return;
     if (previewMode) {
       await loadWorkspace(previewWorkspace.rootPath);
       return;
@@ -342,6 +345,7 @@ export function App(): ReactElement {
   };
   const handleDrop = (event: DragEvent<HTMLDivElement>): void => {
     event.preventDefault();
+    if (requestBusy || workspaceBusy) return;
     const file = event.dataTransfer.files.item(0) as (File & { path?: string }) | null;
     if (file?.path) void loadWorkspace(file.path);
     else if (previewMode) void loadWorkspace(previewWorkspace.rootPath);
@@ -377,7 +381,7 @@ export function App(): ReactElement {
   const activeName = baseName(activePath);
   const code = activePath ? fileContent.split(/\r?\n/) : [];
   const runPrompt = async (): Promise<void> => {
-    if (!prompt.trim()) return;
+    if (requestBusy || !prompt.trim()) return;
     const request = prompt.trim();
     if (!previewMode && state.status !== 'ready') {
       setActivity('Select a model and wait until it is ready before sending a prompt.');
@@ -391,20 +395,53 @@ export function App(): ReactElement {
       setActivity('Build needs an open project file.');
       return;
     }
-    if (agentMode === 'build' && reviewDecision === 'pending' && proposedDiffs.length > 0) {
+    if (agentMode === 'agent' && !workspace) {
+      setAgentResponse('Open a project folder before starting an Agent task.');
+      setActivity('Agent needs an open project.');
+      return;
+    }
+    if (
+      (agentMode === 'build' || agentMode === 'agent') &&
+      reviewDecision === 'pending' &&
+      proposedDiffs.length > 0
+    ) {
       setReviewOpen(true);
       setActivity('Review or reject the pending file batch before starting another Build request.');
       return;
     }
     setRequestBusy(true);
     setAgentResponse('');
-    setActivity(`${agentMode === 'ask' ? 'Answering' : 'Planning'}: ${request}`);
+    setActivity(
+      `${agentMode === 'ask' ? 'Answering' : agentMode === 'agent' ? 'Agent running' : 'Planning'}: ${request}`,
+    );
     setActivityLog((items) => [`Agent started · ${request}`, ...items].slice(0, 5));
     try {
       if (previewMode) {
         setAgentResponse(
           'Preview mode is active. Launch the desktop app with a local llama-server and a GGUF model to receive a real response.',
         );
+      } else if (agentMode === 'agent' && workspace) {
+        const result = await window.zap.runAgentTask(workspace.rootPath, request);
+        setAgentResponse(result.message);
+        setActivityLog((items) =>
+          [...result.events.slice().reverse(), `Agent ${result.task.status}`, ...items].slice(0, 8),
+        );
+        setActivity(
+          result.task.status === 'complete'
+            ? `Agent completed · ${result.task.toolCalls.length} tool step(s)`
+            : `Agent ${result.task.status}`,
+        );
+        if (result.diffs.length > 0) {
+          setProposedDiffs(result.diffs);
+          setSelectedReviewPaths(result.diffs.map((diff) => diff.path));
+          setActiveReviewPath(result.diffs[0]?.path ?? '');
+          setLastBuildRequest(request);
+          setLastDraftMode('agent');
+          setFeedback('');
+          setReviewDecision('pending');
+          setReviewOpen(true);
+          setActivity(`Agent prepared ${result.diffs.length} file(s) · review required.`);
+        }
       } else {
         const currentFile =
           workspace && activePath
@@ -499,6 +536,7 @@ export function App(): ReactElement {
               `Draft ready · ${proposals.length} file${proposals.length === 1 ? '' : 's'} proposed for review.`,
             );
             setLastBuildRequest(request);
+            setLastDraftMode('build');
             setFeedback('');
             setReviewDecision('pending');
             setReviewOpen(true);
@@ -520,7 +558,7 @@ export function App(): ReactElement {
   };
 
   const saveContextSettings = async (): Promise<void> => {
-    if (previewMode) return;
+    if (previewMode || requestBusy || settingsBusy) return;
     const limit = Number(maxContextFiles);
     if (!Number.isFinite(limit) || limit < 100 || limit > 10_000) {
       setSettingsError('Choose a file limit between 100 and 10,000.');
@@ -542,7 +580,7 @@ export function App(): ReactElement {
   };
 
   const chooseModelsDirectory = async (): Promise<void> => {
-    if (previewMode) return;
+    if (previewMode || requestBusy || settingsBusy) return;
     setSettingsBusy(true);
     setSettingsError(undefined);
     try {
@@ -560,7 +598,7 @@ export function App(): ReactElement {
   };
 
   const runTerminalCommand = async (): Promise<void> => {
-    if (!terminalCommand.trim()) return;
+    if (requestBusy || terminalBusy || !terminalCommand.trim()) return;
     if (previewMode || !workspace) {
       setTerminalOutput('Open a project in the desktop app before running commands.');
       return;
@@ -591,7 +629,7 @@ export function App(): ReactElement {
   };
 
   const undoLatestChange = async (): Promise<void> => {
-    if (!lastBackupId || !workspace || previewMode) return;
+    if (requestBusy || !lastBackupId || !workspace || previewMode) return;
     try {
       await window.zap.rollbackPatches(workspace.rootPath, lastBackupId);
       setChangeHistory((current) => current.slice(0, -1));
@@ -646,7 +684,7 @@ export function App(): ReactElement {
       setPrompt(
         `${lastBuildRequest}\n\nPlease revise the draft using this review feedback:\n${feedback.trim()}`,
       );
-      setAgentMode('build');
+      setAgentMode(lastDraftMode);
     }
     setActivity(
       decision === 'approved'
@@ -717,7 +755,7 @@ export function App(): ReactElement {
             <button
               onClick={() => void chooseWorkspace()}
               title="Open folder"
-              disabled={workspaceBusy}
+              disabled={workspaceBusy || requestBusy}
             >
               {workspaceBusy ? '…' : '＋'}
             </button>
@@ -795,7 +833,7 @@ export function App(): ReactElement {
               <button
                 className="settings-action"
                 onClick={() => void chooseModelsDirectory()}
-                disabled={settingsBusy || previewMode}
+                disabled={settingsBusy || requestBusy || previewMode}
               >
                 Choose model folder
               </button>
@@ -810,12 +848,12 @@ export function App(): ReactElement {
                 step={100}
                 value={maxContextFiles}
                 onChange={(event) => setMaxContextFiles(event.target.value)}
-                disabled={settingsBusy || previewMode}
+                disabled={settingsBusy || requestBusy || previewMode}
               />
               <button
                 className="settings-action primary"
                 onClick={() => void saveContextSettings()}
-                disabled={settingsBusy || previewMode || !settings}
+                disabled={settingsBusy || requestBusy || previewMode || !settings}
               >
                 {settingsBusy ? 'Saving…' : 'Save and refresh project'}
               </button>
@@ -845,7 +883,10 @@ export function App(): ReactElement {
               <span>◫</span>
               <strong>Open a folder</strong>
               <small>Load a project to start editing</small>
-              <button onClick={() => void chooseWorkspace()} disabled={workspaceBusy}>
+              <button
+                onClick={() => void chooseWorkspace()}
+                disabled={workspaceBusy || requestBusy}
+              >
                 {workspaceBusy ? 'Opening…' : 'Open Folder'}
               </button>
             </div>
@@ -855,7 +896,7 @@ export function App(): ReactElement {
             <select
               value={state.selectedId ?? ''}
               onChange={(event) => void selectModel(event.target.value)}
-              disabled={loading || models.length === 0}
+              disabled={loading || requestBusy || models.length === 0}
             >
               <option value="">{loading ? 'Scanning…' : 'Select model'}</option>
               {models.map((model) => (
@@ -984,12 +1025,18 @@ export function App(): ReactElement {
                         ? 'Run a command in this project…'
                         : 'Open a project to use the terminal'
                     }
-                    disabled={!workspace || previewMode || terminalBusy}
+                    disabled={!workspace || previewMode || terminalBusy || requestBusy}
                     aria-label="Terminal command"
                   />
                   <button
                     onClick={() => void runTerminalCommand()}
-                    disabled={!workspace || previewMode || !terminalCommand.trim() || terminalBusy}
+                    disabled={
+                      !workspace ||
+                      previewMode ||
+                      !terminalCommand.trim() ||
+                      terminalBusy ||
+                      requestBusy
+                    }
                   >
                     {terminalBusy ? 'Running…' : 'Run'}
                   </button>
@@ -1051,19 +1098,29 @@ export function App(): ReactElement {
               <button
                 className={agentMode === 'build' ? 'active' : ''}
                 onClick={() => setAgentMode('build')}
+                disabled={requestBusy}
               >
                 Build
               </button>
               <button
                 className={agentMode === 'ask' ? 'active' : ''}
                 onClick={() => setAgentMode('ask')}
+                disabled={requestBusy}
               >
                 Ask
+              </button>
+              <button
+                className={agentMode === 'agent' ? 'active' : ''}
+                onClick={() => setAgentMode('agent')}
+                disabled={requestBusy}
+              >
+                Agent
               </button>
             </div>
             <textarea
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
+              disabled={requestBusy}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey) {
                   event.preventDefault();
@@ -1073,7 +1130,9 @@ export function App(): ReactElement {
               placeholder={
                 agentMode === 'build'
                   ? 'Describe a change to this file or the related project…'
-                  : 'Ask about your selected file…'
+                  : agentMode === 'agent'
+                    ? 'Describe a task for the local agent…'
+                    : 'Ask about your selected file…'
               }
             />
             <div className="composer-footer">
@@ -1090,7 +1149,9 @@ export function App(): ReactElement {
           <div className="agent-safety">
             <span>✓</span>
             <span>
-              Changes need approval · run tests in Terminal, then ask Build to fix failures
+              {agentMode === 'agent'
+                ? 'Local agent · file changes need review · terminal commands require approval'
+                : 'Changes need approval · run tests in Terminal, then ask Build to fix failures'}
             </span>
           </div>
         </aside>

@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveModelsDirectory } from '../src/appPaths.js';
+import { runAgentTask } from '../src/agentRunner.js';
 import { discoverModels } from '../src/modelDiscovery.js';
 import { ModelManager } from '../src/modelManager.js';
 import { LlamaServerRuntime, type CompletionOptions } from '../src/llamaRuntime.js';
@@ -22,6 +23,7 @@ let modelsDirectory = resolveModelsDirectory({
 const settingsPath = join(app.getPath('userData'), 'settings.json');
 let appSettings: AppSettings = { modelsDirectory, maxContextFiles: 2000 };
 let activeWorkspaceDirectory: string | undefined;
+let agentTaskRunning = false;
 
 const runtime = new LlamaServerRuntime({
   ...(process.env.LLAMA_SERVER_PATH ? { executablePath: process.env.LLAMA_SERVER_PATH } : {}),
@@ -79,6 +81,74 @@ ipcMain.handle('models:unload', async () => modelManager.unload());
 
 ipcMain.handle('models:complete', async (_event, prompt: string, options?: CompletionOptions) => {
   return runtime.complete(prompt, options);
+});
+
+ipcMain.handle('agent:run', async (event, rootPath: string, instruction: string) => {
+  if (!activeWorkspaceDirectory || resolve(rootPath) !== resolve(activeWorkspaceDirectory)) {
+    throw new Error('Agent tasks must use the currently selected workspace.');
+  }
+  if (agentTaskRunning) throw new Error('An agent task is already running.');
+  if (modelManager.getState().status !== 'ready')
+    throw new Error('Select a model and wait until it is ready before starting an agent task.');
+
+  agentTaskRunning = true;
+  try {
+    const workspace = await loadWorkspaceContext(rootPath);
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    const ensureWorkspaceActive = (): void => {
+      if (!activeWorkspaceDirectory || resolve(rootPath) !== resolve(activeWorkspaceDirectory))
+        throw new Error('The selected project changed while this agent task was running.');
+    };
+    const result = await runAgentTask({
+      workspace,
+      instruction,
+      complete: (prompt, options) => {
+        ensureWorkspaceActive();
+        return runtime.complete(prompt, options);
+      },
+      readFile: (path, maxBytes) => {
+        ensureWorkspaceActive();
+        return readWorkspaceFile(rootPath, path, maxBytes);
+      },
+      readFileIfExists: (path, maxBytes) => {
+        ensureWorkspaceActive();
+        return readWorkspaceFileIfExists(rootPath, path, maxBytes);
+      },
+      approveTerminal: async (call) => {
+        ensureWorkspaceActive();
+        const options = {
+          type: 'warning' as const,
+          title: 'Approve AI Terminal Command',
+          message: call.summary,
+          detail: `Working directory:\n${rootPath}\n\nCommand to run once:\n${call.command ?? ''}`,
+          buttons: ['Reject', 'Run once'],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        };
+        const result = parent
+          ? await dialog.showMessageBox(parent, options)
+          : await dialog.showMessageBox(options);
+        ensureWorkspaceActive();
+        return result.response === 1;
+      },
+      runTerminal: (call) => {
+        ensureWorkspaceActive();
+        return runApprovedTerminal(rootPath, call, { timeoutMs: 30_000, maxOutputBytes: 32_000 });
+      },
+    });
+    if (!activeWorkspaceDirectory || resolve(rootPath) !== resolve(activeWorkspaceDirectory)) {
+      return {
+        ...result,
+        diffs: [],
+        message:
+          'The selected project changed while the agent was working. No file proposal was returned.',
+      };
+    }
+    return result;
+  } finally {
+    agentTaskRunning = false;
+  }
 });
 
 ipcMain.handle('workspace:choose', async () => {

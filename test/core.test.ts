@@ -75,8 +75,15 @@ test('builds an ignore-aware workspace context', async () => {
   const root = await mkdtemp(join(tmpdir(), 'zap-workspace-'));
   await mkdir(join(root, 'src'));
   await mkdir(join(root, 'node_modules'));
+  await mkdir(join(root, '.aws'));
   await writeFile(join(root, 'src', 'main.ts'), 'export const answer = 42;');
   await writeFile(join(root, '.env'), 'SECRET=do-not-index');
+  await writeFile(join(root, '.npmrc'), '//registry.example/:_authToken=do-not-index');
+  await writeFile(
+    join(root, '.aws', 'credentials'),
+    '[default]\naws_secret_access_key=do-not-index',
+  );
+  await writeFile(join(root, 'server.pem'), 'private key material');
   await writeFile(join(root, 'node_modules', 'ignored.js'), 'ignored');
   const context = await buildWorkspaceContext(root, { instructions: 'Use strict TypeScript.' });
   assert.deepEqual(
@@ -309,6 +316,18 @@ test('parses bounded multi-file proposals and rejects unsafe targets', () => {
     undefined,
   );
   assert.equal(
+    parseFileDiffProposals(
+      '{"diffs":[{"path":".aws/credentials","isNew":false,"before":"a","after":"b"}]}',
+    ),
+    undefined,
+  );
+  assert.equal(
+    parseFileDiffProposals(
+      '{"diffs":[{"path":"server.pem","isNew":false,"before":"a","after":"b"}]}',
+    ),
+    undefined,
+  );
+  assert.equal(
     parseFileDiffProposals('{"diffs":[{"path":"new.ts","before":"","after":"new"}]}'),
     undefined,
   );
@@ -374,6 +393,9 @@ test('reads workspace files and runs only approved terminal calls', async () => 
   assert.equal(await readWorkspaceFile(root, 'hello.txt'), 'hello');
   assert.equal(await readWorkspaceFileIfExists(root, 'hello.txt'), 'hello');
   assert.equal(await readWorkspaceFileIfExists(root, 'new-file.txt'), null);
+  await assert.rejects(() => readWorkspaceFile(root, '.npmrc'));
+  await assert.rejects(() => readWorkspaceFile(root, '.aws/credentials'));
+  await assert.rejects(() => readWorkspaceFile(root, 'server.pem'));
   await assert.rejects(() => readWorkspaceFile(root, join(root, '..', 'secret.txt')));
   if (process.platform !== 'win32') {
     const outside = join(await mkdtemp(join(tmpdir(), 'zap-outside-')), 'secret.txt');

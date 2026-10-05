@@ -4,7 +4,7 @@
 
 ## Overview
 
-Zap Ai Tool is an Electron application for browsing a local project, asking questions about the selected file, and drafting changes with a local model. Build mode can propose whole-file replacements for up to eight existing or new files; nothing is written until the user reviews the files, chooses which ones to include, and approves the batch. Approved patches are applied transactionally, backed up, and can be rolled back from Approved Changes.
+Zap Ai Tool is an Electron application for browsing a local project, asking questions about the selected file, and drafting changes with a local model. Build mode proposes whole-file replacements for up to eight existing or new files. The new Agent mode runs a bounded local-model loop: it can read a few relevant project files, optionally request permission to run a terminal command, use that command's result to continue, and prepare changes for human review. Neither mode writes files before the user reviews and approves the proposal. Approved patches are applied transactionally, backed up, and can be rolled back from Approved Changes.
 
 A user-invoked terminal is available in the selected project. Commands run only after the user presses **Run**, in the selected workspace, as the current OS account. Review commands before running them.
 
@@ -15,6 +15,9 @@ A user-invoked terminal is available in the selected project. Commands run only 
 - Workspace folder picker and drag-and-drop, ignore-aware file indexing, context estimates, and automatic reopening of the last project.
 - A real read-only editor view that loads the selected file from disk, plus filename/path filtering.
 - Ask mode sends the selected file content to the local model; Build mode includes the selected file plus a few relevant files, then can draft a bounded multi-file change or new file.
+- Agent mode uses a bounded task loop with structured model actions, up to four protected workspace-file reads, at most two terminal command proposals (each shown in a native approval dialog), up to eight reviewed file changes, three self-correction attempts, and a three-minute run limit.
+- The Agent reports its tool actions and bounded terminal output in the Output panel. It never writes files itself; a proposal is checked against current disk contents and handed to the existing review/approval flow.
+- Model context and change proposals share protected-path checks for environment files, package/cloud credentials, private keys, repository metadata, backups, dependencies, and build output.
 - Reviewed changes are applied transactionally with stale-file checks, backups, and an Undo action.
 - User settings for the model folder and indexed workspace entry limit.
 - Manual terminal command entry with captured output, a 30-second timeout, output limits, common dangerous-pattern blocks, and native Windows `cmd.exe` / POSIX shell support.
@@ -22,7 +25,8 @@ A user-invoked terminal is available in the selected project. Commands run only 
 
 ## Current limitations
 
-- Build mode is bounded to eight whole-file changes per request and needs an existing file selected to start. It does not autonomously call tools or run tests; after the user runs a command in Terminal, its recent output is available to a follow-up Build request for a manually reviewed fix.
+- Build mode is bounded to eight whole-file changes per request and needs an existing file selected to start. It does not run tools; use Agent mode for bounded read/terminal/proposal steps.
+- Agent mode uses the configured local `llama-server`/GGUF model only; cloud AI provider integrations are not implemented. Terminal commands still execute as the current OS user after explicit approval and are not sandboxed.
 - Search filters indexed file paths; it is not full-text search.
 - The code view is currently read-only; file changes are made through reviewed AI proposals.
 - The terminal safety checks are defense-in-depth, not a sandbox. Commands execute with the user's account and can affect anything that account can access. The application is not code-signed yet, so Windows SmartScreen may show an unknown-publisher warning.
@@ -30,7 +34,8 @@ A user-invoked terminal is available in the selected project. Commands run only 
 ## Safety principles
 
 - Never overwrite a project file without explicit review and approval.
-- Terminal commands are user-entered and run only after the user explicitly chooses **Run**; blocked patterns are defense-in-depth, not a security boundary.
+- Manual terminal commands require the user to choose **Run**; an Agent-proposed command is shown with its exact text and selected project before a separate **Run once** approval. Blocked patterns are defense-in-depth, not a security boundary.
+- The model cannot approve its own commands or write files directly; proposals are checked and shown in the human review dialog.
 - Keep GGUF models and project context local by default.
 - Restrict terminal execution to the selected workspace directory.
 - Make approved AI file changes recoverable through backups and rollback.

@@ -1,4 +1,5 @@
 import type { FileDiff, ModelDescriptor, ModelManagerState, WorkspaceContext } from '../index.js';
+import type { AgentRunResult } from '../agentRunner.js';
 import type { PatchApplyResult } from '../patches.js';
 import type { CompletionOptions, CompletionResult } from '../llamaRuntime.js';
 import type { AppSettings } from '../settings.js';
@@ -11,6 +12,7 @@ declare global {
       selectModel(modelId: string): Promise<ModelManagerState>;
       unloadModel(): Promise<ModelManagerState>;
       complete(prompt: string, options?: CompletionOptions): Promise<CompletionResult>;
+      runAgentTask(rootPath: string, instruction: string): Promise<AgentRunResult>;
       chooseWorkspace(): Promise<WorkspaceContext | null>;
       loadWorkspace(rootPath: string): Promise<WorkspaceContext>;
       readWorkspaceFile(rootPath: string, filePath: string): Promise<string>;

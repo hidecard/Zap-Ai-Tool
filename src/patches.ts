@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { dirname, join, relative, resolve } from 'node:path';
 import type { FileDiff } from './domain.js';
 import { isPathInsideWorkspace } from './permissions.js';
+import { isProtectedWorkspacePath } from './pathSafety.js';
 
 export interface PatchApplyResult {
   backupId: string;
@@ -21,18 +22,7 @@ function safeRelativePath(workspaceRoot: string, filePath: string): string {
   const absolute = resolve(root, filePath);
   const relativePath = relative(root, absolute);
   const portablePath = relativePath.replaceAll('\\', '/');
-  const segments = portablePath.split('/').map((segment) => segment.toLowerCase());
-  const basename = segments.at(-1) ?? '';
-  if (
-    !isPathInsideWorkspace(root, absolute) ||
-    segments.some((segment) =>
-      ['.zap-backups', '.git', 'node_modules', 'dist', 'build', 'target'].includes(segment),
-    ) ||
-    basename === '.env' ||
-    basename.startsWith('.env.') ||
-    basename === 'id_rsa' ||
-    basename === 'id_ed25519'
-  ) {
+  if (!isPathInsideWorkspace(root, absolute) || isProtectedWorkspacePath(portablePath)) {
     throw new Error(`Patch path is unsafe or outside the selected workspace: ${filePath}`);
   }
   return portablePath;
