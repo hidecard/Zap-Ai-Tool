@@ -25,3 +25,12 @@ npm test
 ```
 
 The adapter was validated in this workspace with the public `tensorblock/tiny-llama3-test-GGUF` `tiny-llama3-test-Q2_K.gguf` fixture and a CPU `llama-server`: model loading succeeded, `/health` returned ready, and `/completion` returned a non-empty response. This is an adapter smoke test, not a quality benchmark. Llama, DeepSeek, and Qwen family model compatibility should still be checked separately before release.
+
+## Choose a model from any folder
+
+The desktop Settings panel has two model options:
+
+- **Choose model folder** scans `.gguf` files in a directory such as `Models/`.
+- **Add GGUF from Downloads / any folder** opens a file picker restricted to `.gguf` files. This is useful for models already downloaded elsewhere. Zap stores the selected absolute path in the local settings file, lists it alongside the model-folder entries, and sends the path directly to `llama-server` when selected.
+
+If the original file is moved or deleted, it is ignored during the next scan and can be selected again from its new location.

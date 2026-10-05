@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveModelsDirectory } from '../src/appPaths.js';
 import { runAgentTask } from '../src/agentRunner.js';
-import { discoverModels } from '../src/modelDiscovery.js';
+import { describeModel, discoverModels } from '../src/modelDiscovery.js';
 import { ModelManager } from '../src/modelManager.js';
 import { LlamaServerRuntime, type CompletionOptions } from '../src/llamaRuntime.js';
 import { buildWorkspaceContext, loadWorkspaceOptions } from '../src/workspace.js';
@@ -24,6 +24,26 @@ const settingsPath = join(app.getPath('userData'), 'settings.json');
 let appSettings: AppSettings = { modelsDirectory, maxContextFiles: 2000 };
 let activeWorkspaceDirectory: string | undefined;
 let agentTaskRunning = false;
+
+async function discoverConfiguredModels(): Promise<Awaited<ReturnType<typeof discoverModels>>> {
+  const bundled = await discoverModels(modelsDirectory);
+  const external = await Promise.all(
+    (appSettings.modelPaths ?? []).map(async (modelPath) => {
+      try {
+        return await describeModel(modelPath);
+      } catch {
+        return undefined;
+      }
+    }),
+  );
+  const models = [
+    ...bundled,
+    ...external.filter((model): model is NonNullable<typeof model> => model !== undefined),
+  ];
+  return models.filter(
+    (model, index) => models.findIndex((candidate) => candidate.path === model.path) === index,
+  );
+}
 
 const runtime = new LlamaServerRuntime({
   ...(process.env.LLAMA_SERVER_PATH ? { executablePath: process.env.LLAMA_SERVER_PATH } : {}),
@@ -68,7 +88,7 @@ async function createWindow(): Promise<void> {
 
 ipcMain.handle('models:list', async () => {
   await mkdir(modelsDirectory, { recursive: true });
-  const models = await discoverModels(modelsDirectory);
+  const models = await discoverConfiguredModels();
   modelManager.setAvailable(models);
   return { models, state: modelManager.getState() };
 });
@@ -202,6 +222,19 @@ ipcMain.handle('settings:choose-models-directory', async () => {
   await modelManager.unload();
   modelsDirectory = selectedPath;
   return persistSettings({ ...appSettings, modelsDirectory: selectedPath });
+});
+
+ipcMain.handle('models:choose-file', async () => {
+  const result = await dialog.showOpenDialog({
+    title: 'Choose a GGUF model file',
+    properties: ['openFile'],
+    filters: [{ name: 'GGUF models', extensions: ['gguf'] }],
+  });
+  const selectedPath = result.filePaths[0];
+  if (result.canceled || !selectedPath) return null;
+  await describeModel(selectedPath);
+  const modelPaths = [...new Set([...(appSettings.modelPaths ?? []), selectedPath])];
+  return persistSettings({ ...appSettings, modelPaths });
 });
 
 ipcMain.handle('terminal:run', async (_event, rootPath: string, command: string) => {

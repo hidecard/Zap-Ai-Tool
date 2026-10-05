@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('zap', {
     ipcRenderer.invoke('settings:update-context-limit', maxContextFiles),
   chooseModelsDirectory: (): Promise<AppSettings | null> =>
     ipcRenderer.invoke('settings:choose-models-directory'),
+  chooseModelFile: (): Promise<AppSettings | null> => ipcRenderer.invoke('models:choose-file'),
   runTerminal: (rootPath: string, command: string): Promise<TerminalResult> =>
     ipcRenderer.invoke('terminal:run', rootPath, command),
 });

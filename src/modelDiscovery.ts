@@ -22,3 +22,18 @@ export async function discoverModels(modelsDirectory: string): Promise<ModelDesc
 
   return models.sort((left, right) => left.name.localeCompare(right.name));
 }
+
+export async function describeModel(modelPath: string): Promise<ModelDescriptor> {
+  if (!modelPath.toLowerCase().endsWith('.gguf')) {
+    throw new Error('Only GGUF model files are supported.');
+  }
+  const metadata = await stat(modelPath);
+  return {
+    id: `external:${modelPath}`,
+    name: modelPath.split(/[\\/]/).pop()?.slice(0, -'.gguf'.length) ?? modelPath,
+    path: modelPath,
+    format: 'gguf',
+    sizeBytes: metadata.size,
+    modifiedAt: metadata.mtime.toISOString(),
+  };
+}

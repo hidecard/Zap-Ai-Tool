@@ -52,6 +52,8 @@ npm run desktop
 
 Put local GGUF files in `Models/` before launching the desktop app in development. In an installed app, Zap stores and scans models in its per-user application-data folder so a standard Windows account can use models without administrator access. The model folder can be changed in Settings.
 
+Already downloaded a model elsewhere? Open **Settings → Add GGUF from Downloads / any folder** to choose a `.gguf` file directly. Zap remembers the absolute path locally and shows it in the same model selector without copying the potentially large model file.
+
 The desktop runtime launches a compatible `llama-server` binary for the selected GGUF model, waits for `GET /health`, and sends completions to `POST /completion`. Install a compatible llama.cpp build and either put `llama-server` on `PATH` or set `LLAMA_SERVER_PATH` (and optionally `LLAMA_GPU_LAYERS`) before starting the app.
 
 For a real model smoke test, run `LLAMA_SERVER_PATH=/path/to/llama-server GGUF_MODEL_PATH=/path/to/model.gguf npm test`. Without those variables, the real-model test is skipped while the fake-server adapter test still runs.

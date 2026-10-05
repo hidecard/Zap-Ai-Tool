@@ -26,6 +26,7 @@ Thumbs.db
 *.log
 .cache/
 coverage/
+.zap-backups/
 release/
 release-artifact/
 release-assets-v*/

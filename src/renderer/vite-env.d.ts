@@ -22,6 +22,7 @@ declare global {
       getSettings(): Promise<AppSettings>;
       updateMaxContextFiles(maxContextFiles: number): Promise<AppSettings>;
       chooseModelsDirectory(): Promise<AppSettings | null>;
+      chooseModelFile(): Promise<AppSettings | null>;
       runTerminal(rootPath: string, command: string): Promise<TerminalResult>;
     };
   }

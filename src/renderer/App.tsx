@@ -597,6 +597,25 @@ export function App(): ReactElement {
     }
   };
 
+  const chooseModelFile = async (): Promise<void> => {
+    if (previewMode || requestBusy || settingsBusy) return;
+    setSettingsBusy(true);
+    setSettingsError(undefined);
+    try {
+      const updated = await window.zap.chooseModelFile();
+      if (updated) {
+        setSettings(updated);
+        await refreshModels();
+        setActivity('GGUF model added · choose it from the model selector.');
+        setActivityLog((items) => ['Model added from any folder', ...items].slice(0, 5));
+      }
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSettingsBusy(false);
+    }
+  };
+
   const runTerminalCommand = async (): Promise<void> => {
     if (requestBusy || terminalBusy || !terminalCommand.trim()) return;
     if (previewMode || !workspace) {
@@ -837,6 +856,16 @@ export function App(): ReactElement {
               >
                 Choose model folder
               </button>
+              <button
+                className="settings-action primary"
+                onClick={() => void chooseModelFile()}
+                disabled={settingsBusy || requestBusy || previewMode}
+              >
+                Add GGUF from Downloads / any folder
+              </button>
+              {settings?.modelPaths && settings.modelPaths.length > 0 && (
+                <small>{settings.modelPaths.length} external GGUF model(s) remembered.</small>
+              )}
               <div className="setting-row">
                 <span>Workspace entry limit</span>
                 <b>100–10,000</b>

@@ -27,6 +27,8 @@
 - [x] Implement safe unload/load lifecycle for switching models.
 - [x] Add model runtime health checks and actionable error state.
 - [ ] Test with Llama, DeepSeek, and Qwen-compatible GGUF models.
+- [x] Connect the local `llama-server` backend with model load, health, and completion APIs.
+- [x] Allow selecting a GGUF file directly from Downloads or any local folder.
 
 > The llama.cpp `llama-server` adapter and an opt-in real-GGUF smoke test are implemented. A tiny Llama3-compatible GGUF has been validated locally; the three-family compatibility matrix remains open.
 
@@ -36,7 +38,8 @@
 - [x] Exclude secrets, build output, dependency folders, and oversized files by default.
 - [x] Add folder picker and drag-and-drop workspace loading.
 - [x] Build initial context preview and token-budget estimate UI.
-- [x] Add project instructions and configurable ignore patterns.
+- [ ] Add project instructions and configurable ignore patterns.
+- [x] Restore model and workspace settings across app restarts.
 - [x] Load selected file content in the editor and filter the indexed file paths.
 - [x] Persist and restore the last opened workspace and indexed-entry limit.
 

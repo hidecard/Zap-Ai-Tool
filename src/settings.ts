@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 
 export interface AppSettings {
   modelsDirectory: string;
+  modelPaths?: string[];
   workspaceDirectory?: string;
   maxContextFiles: number;
 }
@@ -26,6 +27,12 @@ export async function loadSettings(
           ? Math.max(100, Math.min(10_000, Math.floor(raw.maxContextFiles)))
           : defaults.maxContextFiles,
     };
+    const modelPaths = Array.isArray(raw.modelPaths)
+      ? raw.modelPaths.filter(
+          (value): value is string => typeof value === 'string' && value.trim().length > 0,
+        )
+      : defaults.modelPaths;
+    if (modelPaths && modelPaths.length > 0) settings.modelPaths = [...new Set(modelPaths)];
     const workspaceDirectory =
       typeof raw.workspaceDirectory === 'string' && raw.workspaceDirectory.trim()
         ? raw.workspaceDirectory

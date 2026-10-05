@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { ModelManager } from '../src/modelManager.js';
-import { discoverModels } from '../src/modelDiscovery.js';
+import { describeModel, discoverModels } from '../src/modelDiscovery.js';
 import { isPathInsideWorkspace, validateToolCall } from '../src/permissions.js';
 import { createTask, transitionTask } from '../src/taskRunner.js';
 import { readWorkspaceFile, readWorkspaceFileIfExists, runApprovedTerminal } from '../src/tools.js';
@@ -47,6 +47,19 @@ test('discovers and sorts GGUF models while ignoring other files', async () => {
     ['Llama', 'Qwen'],
   );
   assert.equal(models[0]?.format, 'gguf');
+});
+
+test('describes a GGUF model from an arbitrary folder', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'zap-external-model-'));
+  const downloads = join(root, 'Downloads');
+  const modelPath = join(downloads, 'Qwen.gguf');
+  await mkdir(downloads);
+  await writeFile(modelPath, 'model');
+  const model = await describeModel(modelPath);
+  assert.equal(model.name, 'Qwen');
+  assert.equal(model.path, modelPath);
+  assert.match(model.id, /^external:/);
+  await assert.rejects(() => describeModel(join(root, 'notes.txt')), /Only GGUF/);
 });
 
 test('persists user settings and applies runtime defaults for new installs', async () => {
