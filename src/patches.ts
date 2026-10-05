@@ -35,7 +35,7 @@ function safeRelativePath(workspaceRoot: string, filePath: string): string {
   ) {
     throw new Error(`Patch path is unsafe or outside the selected workspace: ${filePath}`);
   }
-  return relativePath;
+  return portablePath;
 }
 
 function safeBackupDirectory(workspaceRoot: string, backupId: string): string {
