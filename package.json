@@ -1,6 +1,6 @@
 {
   "name": "zap-ai-tool",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "private": true,
   "description": "Local-first, model-agnostic AI software engineer desktop app",
   "type": "module",
