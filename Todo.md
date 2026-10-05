@@ -37,6 +37,8 @@
 - [x] Add folder picker and drag-and-drop workspace loading.
 - [x] Build initial context preview and token-budget estimate UI.
 - [x] Add project instructions and configurable ignore patterns.
+- [x] Load selected file content in the editor and filter the indexed file paths.
+- [x] Persist and restore the last opened workspace and indexed-entry limit.
 
 ## Phase 4 — Autonomous Loop
 
@@ -47,13 +49,16 @@
 - [x] Capture stdout, stderr, exit codes, and duration for each command.
 - [x] Add bounded self-correction retry accounting to the task state machine.
 
+> The new Agent mode connects model-generated structured actions to bounded file reads, exact-command native approval, terminal result feedback, stale-proposal validation, and bounded correction. Build mode remains a single completion request and does not invoke tools.
+
 ## Phase 5 — Human-in-the-Loop
 
-- [x] Build side-by-side old/new diff view.
-- [x] Support file-by-file and hunk-by-hunk review.
+- [x] Build a whole-file review dialog with per-file selection and batch approval.
+- [ ] Build a line-level side-by-side diff and hunk selection UI.
 - [x] Implement Approve, Reject, and feedback flows.
 - [x] Apply approved patches atomically with backup/rollback support.
-- [x] Show an activity timeline and task completion summary.
+- [x] Show the current session's approved changes and provide an Undo action.
+- [x] Show recent agent, approval, and terminal activity in the Output panel.
 
 ## Phase 6 — Quality & Release
 
@@ -66,3 +71,20 @@
 - [x] Write user documentation and troubleshooting guides.
 - [x] Add GitHub Actions Windows EXE artifact workflow for version tags and manual runs.
 - [x] Publish raw `.exe` and `.deb` files directly to versioned GitHub Releases.
+
+## Phase 7 — Renderer integration
+
+- [x] Replace the sample editor source with the selected workspace file.
+- [x] Connect search to indexed file paths, Source Control to reviewed changes, and Settings to persistent preferences.
+- [x] Connect a user-invoked terminal to the selected workspace, including Windows shell support.
+- [x] Display real command output and session activity instead of placeholder terminal text.
+- [x] Support up to eight existing/new-file proposals in a transaction with rollback.
+- [x] Connect model-generated Agent actions to local GGUF completions, protected file reads, and the task state machine.
+- [x] Require explicit per-command native approval and feed bounded terminal results back to the local model.
+- [x] Validate generated proposals against current disk state and return them to the human review flow without writing files.
+- [x] Bound Agent reads, command attempts, model steps, retry count, context size, and execution budget; expired command approvals do not run.
+- [ ] Add read/write manual editor mode.
+- [ ] Add user cancellation/progress events during an in-flight Agent task.
+- [ ] Add sandboxed terminal execution and configurable command allow-list.
+- [ ] Add hosted AI provider integrations (currently the Agent uses the local llama.cpp runtime).
+- [ ] Add full-text project search and an actual Git status/diff integration.

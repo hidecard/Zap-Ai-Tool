@@ -38,6 +38,8 @@ export interface FileDiff {
   path: string;
   before: string;
   after: string;
+  /** True only when the proposal intends to create a file that must not already exist. */
+  isNew?: boolean;
 }
 
 export type TaskStatus =

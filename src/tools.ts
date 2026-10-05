@@ -1,6 +1,8 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
+import { relative, resolve } from 'node:path';
 import { isPathInsideWorkspace, validateToolCall } from './permissions.js';
+import { isProtectedWorkspacePath } from './pathSafety.js';
 import type { ToolCall } from './domain.js';
 
 export async function readWorkspaceFile(
@@ -8,12 +10,44 @@ export async function readWorkspaceFile(
   filePath: string,
   maxBytes = 512_000,
 ): Promise<string> {
-  if (!isPathInsideWorkspace(workspaceRoot, filePath))
+  const absolutePath = resolve(workspaceRoot, filePath);
+  const requestedRelative = relative(resolve(workspaceRoot), absolutePath);
+  if (
+    !isPathInsideWorkspace(workspaceRoot, absolutePath) ||
+    isProtectedWorkspacePath(requestedRelative)
+  )
+    throw new Error('File reads are blocked outside the workspace or for protected paths.');
+  const [realWorkspaceRoot, realFilePath] = await Promise.all([
+    realpath(workspaceRoot),
+    realpath(absolutePath),
+  ]);
+  if (!isPathInsideWorkspace(realWorkspaceRoot, realFilePath))
     throw new Error('File reads must stay inside the selected workspace.');
-  const content = await readFile(filePath, 'utf8');
+  if (isProtectedWorkspacePath(relative(realWorkspaceRoot, realFilePath)))
+    throw new Error('File reads are blocked for protected paths.');
+  const content = await readFile(realFilePath, 'utf8');
   if (Buffer.byteLength(content, 'utf8') > maxBytes)
     throw new Error(`File exceeds the ${maxBytes}-byte read limit.`);
   return content;
+}
+
+export async function readWorkspaceFileIfExists(
+  workspaceRoot: string,
+  filePath: string,
+  maxBytes = 512_000,
+): Promise<string | null> {
+  try {
+    return await readWorkspaceFile(workspaceRoot, filePath, maxBytes);
+  } catch (error) {
+    if (
+      error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as NodeJS.ErrnoException).code === 'ENOENT'
+    )
+      return null;
+    throw error;
+  }
 }
 
 export interface TerminalResult {
@@ -38,10 +72,16 @@ export async function runApprovedTerminal(
   const timeoutMs = options.timeoutMs ?? 30_000;
   const maxOutputBytes = options.maxOutputBytes ?? 1_000_000;
   return await new Promise((resolve, reject) => {
-    const child = spawn('sh', ['-c', command], {
-      cwd: workspaceRoot,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const isWindows = process.platform === 'win32';
+    const child = spawn(
+      isWindows ? (process.env.ComSpec ?? 'cmd.exe') : 'sh',
+      isWindows ? ['/d', '/s', '/c', command] : ['-c', command],
+      {
+        cwd: workspaceRoot,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      },
+    );
     let stdout = '';
     let stderr = '';
     let timedOut = false;

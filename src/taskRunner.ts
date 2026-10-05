@@ -2,7 +2,7 @@ import type { AgentTask, TaskStatus } from './domain.js';
 
 const ALLOWED: Record<TaskStatus, readonly TaskStatus[]> = {
   plan: ['inspect', 'failed'],
-  inspect: ['draft', 'failed'],
+  inspect: ['revise', 'draft', 'failed'],
   draft: ['validate', 'failed'],
   validate: ['revise', 'complete', 'failed'],
   revise: ['inspect', 'draft', 'failed'],

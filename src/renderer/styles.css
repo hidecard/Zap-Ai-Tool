@@ -890,3 +890,275 @@ button {
     justify-content: end;
   }
 }
+
+/* Functional workspace controls and runtime output */
+.tree-file span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-panel .path-setting {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.settings-action {
+  width: 100%;
+  margin: 8px 0 14px;
+  padding: 8px 10px;
+  border: 1px solid #385872;
+  border-radius: 5px;
+  background: #14283c;
+  color: #bed0e2;
+  font-size: 10px;
+  text-align: left;
+}
+.settings-action.primary {
+  border-color: #5baf91;
+  background: #a8e6cf;
+  color: #102f38;
+  font-weight: 600;
+  text-align: center;
+}
+.settings-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.inline-error {
+  color: #ff9dab !important;
+  line-height: 1.5;
+}
+.editor-state {
+  padding: 18px 54px;
+  color: #829ab4;
+  font:
+    11px/1.6 'DM Mono',
+    monospace;
+}
+.editor-state.error {
+  color: #ff9dab;
+}
+.terminal-panel {
+  height: 190px;
+  flex-basis: 190px;
+}
+.terminal-tabs small {
+  overflow: hidden;
+  color: #617a96;
+  font:
+    9px 'DM Mono',
+    monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.terminal-tabs button {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: #829ab4;
+  font-size: 9px;
+}
+.terminal-content {
+  height: calc(100% - 38px);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 7px 12px 8px;
+}
+.terminal-output {
+  min-height: 0;
+  flex: 1;
+  margin: 0;
+  overflow: auto;
+  color: #a9bdd1;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font:
+    10px/1.45 'DM Mono',
+    monospace;
+}
+.terminal-runner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+}
+.terminal-runner input {
+  min-width: 0;
+  flex: 1;
+  padding: 7px 9px;
+  border: 1px solid #2b4661;
+  border-radius: 4px;
+  outline: none;
+  background: #091321;
+  color: #dce8f6;
+  font:
+    10px 'DM Mono',
+    monospace;
+}
+.terminal-runner input:focus {
+  border-color: #5baf91;
+}
+.terminal-runner button {
+  padding: 6px 11px;
+  border: 1px solid #5baf91;
+  border-radius: 4px;
+  background: #a8e6cf;
+  color: #102f38;
+  font-size: 10px;
+  font-weight: 600;
+}
+.terminal-runner button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.diff-line code {
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+.source-panel .change-row span:nth-child(2) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.terminal-tabs > button.terminal-tab-button {
+  margin-left: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #617a96;
+  font:
+    9px 'DM Mono',
+    monospace;
+}
+.terminal-tabs > button.terminal-tab-button.active {
+  color: #dce8f6;
+}
+.terminal-tabs > button.terminal-clear {
+  margin-left: auto;
+}
+
+.pending-change {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+.pending-change:hover {
+  background: #172940;
+}
+.pending-change b {
+  margin-left: auto;
+}
+
+.review-dialog {
+  width: min(980px, 100%);
+  max-height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+}
+.review-files-layout {
+  min-height: 250px;
+  height: clamp(260px, 48vh, 480px);
+  display: grid;
+  grid-template-columns: minmax(190px, 260px) minmax(0, 1fr);
+  overflow: hidden;
+  border-bottom: 1px solid #263e58;
+}
+.review-file-list {
+  overflow-y: auto;
+  padding: 8px;
+  border-right: 1px solid #263e58;
+  background: #0d1928;
+}
+.review-file-row {
+  display: grid;
+  grid-template-columns: 17px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+}
+.review-file-row input {
+  accent-color: #a8e6cf;
+}
+.review-file-row button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #a9bdd2;
+  text-align: left;
+  font:
+    10px 'DM Mono',
+    monospace;
+  cursor: pointer;
+}
+.review-file-row button:hover,
+.review-file-row button.active {
+  border-color: #2d4c67;
+  background: #182a3f;
+  color: #e0edf8;
+}
+.review-file-row button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.review-file-row button small {
+  flex: 0 0 auto;
+  color: #a8e6cf;
+  font-size: 8px;
+}
+.review-file-detail {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.review-file-detail .diff-meta {
+  gap: 12px;
+  padding: 11px 14px;
+}
+.review-file-detail .diff-meta span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.review-file-detail .diff-view {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0 12px 12px;
+}
+.review-file-detail .diff-line code {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.review-dialog > textarea:disabled {
+  opacity: 0.65;
+}
+.review-footer button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+@media (max-width: 700px) {
+  .review-files-layout {
+    grid-template-columns: minmax(110px, 150px) minmax(0, 1fr);
+  }
+  .review-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .review-footer > div {
+    align-self: flex-end;
+  }
+}
