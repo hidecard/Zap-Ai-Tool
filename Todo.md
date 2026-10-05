@@ -37,6 +37,8 @@
 - [x] Add folder picker and drag-and-drop workspace loading.
 - [x] Build initial context preview and token-budget estimate UI.
 - [x] Add project instructions and configurable ignore patterns.
+- [x] Load selected file content in the editor and filter the indexed file paths.
+- [x] Persist and restore the last opened workspace and indexed-entry limit.
 
 ## Phase 4 — Autonomous Loop
 
@@ -47,13 +49,16 @@
 - [x] Capture stdout, stderr, exit codes, and duration for each command.
 - [x] Add bounded self-correction retry accounting to the task state machine.
 
+> The current UI exposes a user-entered terminal, not model-generated tool calls. Automatic test execution, tool approval prompts, and autonomous self-correction are not yet connected to Build mode.
+
 ## Phase 5 — Human-in-the-Loop
 
-- [x] Build side-by-side old/new diff view.
-- [x] Support file-by-file and hunk-by-hunk review.
+- [x] Build a whole-file review dialog with per-file selection and batch approval.
+- [ ] Build a line-level side-by-side diff and hunk selection UI.
 - [x] Implement Approve, Reject, and feedback flows.
 - [x] Apply approved patches atomically with backup/rollback support.
-- [x] Show an activity timeline and task completion summary.
+- [x] Show the current session's approved changes and provide an Undo action.
+- [x] Show recent agent, approval, and terminal activity in the Output panel.
 
 ## Phase 6 — Quality & Release
 
@@ -66,3 +71,14 @@
 - [x] Write user documentation and troubleshooting guides.
 - [x] Add GitHub Actions Windows EXE artifact workflow for version tags and manual runs.
 - [x] Publish raw `.exe` and `.deb` files directly to versioned GitHub Releases.
+
+## Phase 7 — Renderer integration
+
+- [x] Replace the sample editor source with the selected workspace file.
+- [x] Connect search to indexed file paths, Source Control to reviewed changes, and Settings to persistent preferences.
+- [x] Connect a user-invoked terminal to the selected workspace, including Windows shell support.
+- [x] Display real command output and session activity instead of placeholder terminal text.
+- [x] Support up to eight existing/new-file proposals in a transaction with rollback.
+- [ ] Add read/write manual editor mode.
+- [ ] Connect model-generated tool calls to approval, validation, and bounded self-correction.
+- [ ] Add full-text project search and an actual Git status/diff integration.

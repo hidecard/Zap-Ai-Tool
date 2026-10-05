@@ -1,6 +1,8 @@
 import type { FileDiff, ModelDescriptor, ModelManagerState, WorkspaceContext } from '../index.js';
 import type { PatchApplyResult } from '../patches.js';
 import type { CompletionOptions, CompletionResult } from '../llamaRuntime.js';
+import type { AppSettings } from '../settings.js';
+import type { TerminalResult } from '../tools.js';
 
 declare global {
   interface Window {
@@ -12,8 +14,13 @@ declare global {
       chooseWorkspace(): Promise<WorkspaceContext | null>;
       loadWorkspace(rootPath: string): Promise<WorkspaceContext>;
       readWorkspaceFile(rootPath: string, filePath: string): Promise<string>;
+      readWorkspaceFileIfExists(rootPath: string, filePath: string): Promise<string | null>;
       applyPatches(rootPath: string, diffs: FileDiff[]): Promise<PatchApplyResult>;
       rollbackPatches(rootPath: string, backupId: string): Promise<string[]>;
+      getSettings(): Promise<AppSettings>;
+      updateMaxContextFiles(maxContextFiles: number): Promise<AppSettings>;
+      chooseModelsDirectory(): Promise<AppSettings | null>;
+      runTerminal(rootPath: string, command: string): Promise<TerminalResult>;
     };
   }
 }

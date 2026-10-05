@@ -8,13 +8,14 @@ import { ModelManager } from '../src/modelManager.js';
 import { discoverModels } from '../src/modelDiscovery.js';
 import { isPathInsideWorkspace, validateToolCall } from '../src/permissions.js';
 import { createTask, transitionTask } from '../src/taskRunner.js';
-import { readWorkspaceFile, runApprovedTerminal } from '../src/tools.js';
+import { readWorkspaceFile, readWorkspaceFileIfExists, runApprovedTerminal } from '../src/tools.js';
 import { buildWorkspaceContext } from '../src/workspace.js';
 import { applyFileDiffs, rollbackFileDiffs } from '../src/patches.js';
 import { createFileReviews, selectReviewedDiffs } from '../src/review.js';
 import { LlamaServerRuntime } from '../src/llamaRuntime.js';
-import { parseFileDiffProposal } from '../src/diffProposal.js';
+import { parseFileDiffProposal, parseFileDiffProposals } from '../src/diffProposal.js';
 import { resolveModelsDirectory } from '../src/appPaths.js';
+import { loadSettings, saveSettings } from '../src/settings.js';
 
 test('stores packaged models in user data, not the protected install directory', () => {
   assert.equal(
@@ -46,6 +47,28 @@ test('discovers and sorts GGUF models while ignoring other files', async () => {
     ['Llama', 'Qwen'],
   );
   assert.equal(models[0]?.format, 'gguf');
+});
+
+test('persists user settings and applies runtime defaults for new installs', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'zap-settings-'));
+  const settingsPath = join(root, 'config', 'settings.json');
+  const defaults = { modelsDirectory: join(root, 'Models'), maxContextFiles: 2000 };
+  assert.deepEqual(await loadSettings(settingsPath, defaults), defaults);
+  const settings = {
+    ...defaults,
+    workspaceDirectory: join(root, 'project'),
+    maxContextFiles: 750,
+  };
+  await saveSettings(settingsPath, settings);
+  assert.deepEqual(await loadSettings(settingsPath, defaults), settings);
+  await writeFile(
+    settingsPath,
+    JSON.stringify({ modelsDirectory: '', workspaceDirectory: 12, maxContextFiles: 50_000 }),
+  );
+  assert.deepEqual(await loadSettings(settingsPath, defaults), {
+    ...defaults,
+    maxContextFiles: 10_000,
+  });
 });
 
 test('builds an ignore-aware workspace context', async () => {
@@ -96,6 +119,58 @@ test('applies diffs with a backup and restores them on rollback', async () => {
   assert.equal(await readFile(file, 'utf8'), 'const value = 1;\n');
 });
 
+test('creates new files in a multi-file patch and removes them on rollback', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'zap-new-file-'));
+  await writeFile(join(root, 'src.ts'), 'old source');
+  const result = await applyFileDiffs(root, [
+    { path: 'src.ts', before: 'old source', after: 'new source', isNew: false },
+    { path: 'test/src.test.ts', before: '', after: 'test source', isNew: true },
+  ]);
+  assert.equal(await readFile(join(root, 'src.ts'), 'utf8'), 'new source');
+  assert.equal(await readFile(join(root, 'test/src.test.ts'), 'utf8'), 'test source');
+  assert.deepEqual(result.changedFiles, ['src.ts', 'test/src.test.ts']);
+  await rollbackFileDiffs(root, result.backupId);
+  assert.equal(await readFile(join(root, 'src.ts'), 'utf8'), 'old source');
+  await assert.rejects(() => readFile(join(root, 'test/src.test.ts'), 'utf8'));
+});
+
+test('distinguishes new files from empty existing files during patch preflight', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'zap-empty-file-'));
+  await writeFile(join(root, 'empty.ts'), '');
+  await assert.rejects(
+    () => applyFileDiffs(root, [{ path: 'empty.ts', before: '', after: 'created', isNew: true }]),
+    /must not already exist/,
+  );
+  const result = await applyFileDiffs(root, [
+    { path: 'empty.ts', before: '', after: 'updated', isNew: false },
+  ]);
+  assert.equal(await readFile(join(root, 'empty.ts'), 'utf8'), 'updated');
+  await rollbackFileDiffs(root, result.backupId);
+  assert.equal(await readFile(join(root, 'empty.ts'), 'utf8'), '');
+});
+
+test('refuses to reuse a backup identifier and preserves the original rollback point', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'zap-backup-id-'));
+  await writeFile(join(root, 'file.txt'), 'original');
+  const first = await applyFileDiffs(
+    root,
+    [{ path: 'file.txt', before: 'original', after: 'first change' }],
+    'stable-backup-id',
+  );
+  await assert.rejects(
+    () =>
+      applyFileDiffs(
+        root,
+        [{ path: 'file.txt', before: 'first change', after: 'second change' }],
+        'stable-backup-id',
+      ),
+    /EEXIST/,
+  );
+  assert.equal(await readFile(join(root, 'file.txt'), 'utf8'), 'first change');
+  await rollbackFileDiffs(root, first.backupId);
+  assert.equal(await readFile(join(root, 'file.txt'), 'utf8'), 'original');
+});
+
 test('blocks a stale patch when the current file differs from the draft', async () => {
   const root = await mkdtemp(join(tmpdir(), 'zap-conflict-'));
   const file = join(root, 'app.ts');
@@ -133,6 +208,30 @@ test('rejects symlink patch targets and supports hunk review selection', async (
   await assert.rejects(
     () => applyFileDiffs(root, [{ path: 'linked.txt', before: 'secret', after: 'leak' }]),
     /Symlink/,
+  );
+  await symlink(
+    outside,
+    join(root, 'linked-dir'),
+    process.platform === 'win32' ? 'junction' : 'dir',
+  );
+  await assert.rejects(
+    () =>
+      applyFileDiffs(root, [{ path: 'linked-dir/new.txt', before: '', after: 'outside write' }]),
+    /Symlink parent/,
+  );
+  const unsafeRoot = await mkdtemp(join(tmpdir(), 'zap-unsafe-backups-'));
+  await symlink(
+    outside,
+    join(unsafeRoot, '.zap-backups'),
+    process.platform === 'win32' ? 'junction' : 'dir',
+  );
+  await assert.rejects(
+    () => applyFileDiffs(unsafeRoot, [{ path: 'safe.txt', before: '', after: 'new' }]),
+    /backup path/,
+  );
+  await assert.rejects(
+    () => applyFileDiffs(root, [{ path: 'safe.txt', before: '', after: 'new' }], '../outside'),
+    /Invalid backup identifier/,
   );
   const reviews = createFileReviews([{ path: 'app.ts', before: 'a\nb\nc', after: 'a\nB\nc\nd' }]);
   assert.equal(reviews[0]?.hunks.length, 1);
@@ -180,6 +279,54 @@ test('parses only strict file diff proposals from model output', () => {
   assert.equal(parseFileDiffProposal('I changed the file for you.', 'app.ts'), undefined);
 });
 
+test('parses bounded multi-file proposals and rejects unsafe targets', () => {
+  assert.deepEqual(
+    parseFileDiffProposals(
+      JSON.stringify({
+        diffs: [
+          { path: 'src/app.ts', isNew: false, before: 'old', after: 'new' },
+          { path: 'test/app.test.ts', isNew: true, before: '', after: 'new test' },
+        ],
+      }),
+    ),
+    [
+      { path: 'src/app.ts', isNew: false, before: 'old', after: 'new' },
+      { path: 'test/app.test.ts', isNew: true, before: '', after: 'new test' },
+    ],
+  );
+  assert.equal(
+    parseFileDiffProposals('{"diffs":[{"path":"../secret","before":"","after":"x"}]}'),
+    undefined,
+  );
+  assert.equal(
+    parseFileDiffProposals(
+      '{"diffs":[{"path":"App.ts","before":"a","after":"b"},{"path":"app.ts","before":"c","after":"d"}]}',
+    ),
+    undefined,
+  );
+  assert.equal(
+    parseFileDiffProposals('{"diffs":[{"path":".env","before":"","after":"secret"}]}'),
+    undefined,
+  );
+  assert.equal(
+    parseFileDiffProposals('{"diffs":[{"path":"new.ts","before":"","after":"new"}]}'),
+    undefined,
+  );
+  assert.equal(
+    parseFileDiffProposals(
+      JSON.stringify({
+        diffs: Array.from({ length: 9 }, (_, index) => ({
+          path: `f${index}.txt`,
+          isNew: true,
+          before: '',
+          after: 'x',
+        })),
+      }),
+    ),
+    undefined,
+  );
+});
+
 test('switches models safely and reports runtime health', async () => {
   const events: string[] = [];
   const runtime = {
@@ -224,16 +371,25 @@ test('reads workspace files and runs only approved terminal calls', async () => 
   const file = join(root, 'hello.txt');
   await writeFile(file, 'hello');
   assert.equal(await readWorkspaceFile(root, file), 'hello');
+  assert.equal(await readWorkspaceFile(root, 'hello.txt'), 'hello');
+  assert.equal(await readWorkspaceFileIfExists(root, 'hello.txt'), 'hello');
+  assert.equal(await readWorkspaceFileIfExists(root, 'new-file.txt'), null);
   await assert.rejects(() => readWorkspaceFile(root, join(root, '..', 'secret.txt')));
+  if (process.platform !== 'win32') {
+    const outside = join(await mkdtemp(join(tmpdir(), 'zap-outside-')), 'secret.txt');
+    await writeFile(outside, 'secret');
+    await symlink(outside, join(root, 'linked-secret.txt'));
+    await assert.rejects(() => readWorkspaceFile(root, 'linked-secret.txt'));
+  }
   const result = await runApprovedTerminal(root, {
     id: 'terminal-1',
     name: 'terminal.run',
     risk: 'read-only',
     summary: 'Print working directory',
-    command: 'printf ready',
+    command: process.platform === 'win32' ? 'echo ready' : 'printf ready',
     status: 'proposed',
   });
-  assert.equal(result.stdout, 'ready');
+  assert.equal(result.stdout.trim(), 'ready');
   assert.equal(result.exitCode, 0);
   assert.equal(result.timedOut, false);
   assert.equal(result.cancelled, false);
@@ -312,6 +468,7 @@ test('serializes concurrent model selections and leaves the newest model ready',
 
 test('reports terminal cancellation and timeout instead of hanging', async () => {
   const root = await mkdtemp(join(tmpdir(), 'zap-cancel-'));
+  const waitCommand = process.platform === 'win32' ? 'ping -n 3 127.0.0.1 > nul' : 'sleep 1';
   const controller = new AbortController();
   const cancelled = runApprovedTerminal(
     root,
@@ -320,7 +477,7 @@ test('reports terminal cancellation and timeout instead of hanging', async () =>
       name: 'terminal.run',
       risk: 'read-only',
       summary: 'sleep',
-      command: 'sleep 1',
+      command: waitCommand,
       status: 'proposed',
     },
     { signal: controller.signal, timeoutMs: 5_000 },
@@ -334,7 +491,7 @@ test('reports terminal cancellation and timeout instead of hanging', async () =>
       name: 'terminal.run',
       risk: 'read-only',
       summary: 'sleep',
-      command: 'sleep 1',
+      command: waitCommand,
       status: 'proposed',
     },
     { timeoutMs: 10 },
