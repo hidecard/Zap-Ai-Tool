@@ -23,6 +23,18 @@ const PROTECTED_FILE_NAMES = new Set([
   'id_ed25519',
 ]);
 
+/**
+ * Project configuration owned by the human, never by a model. These files steer
+ * the agent, so a generated patch must not be able to rewrite them.
+ */
+const PROJECT_CONFIG_FILES = new Set(['zap.md', '.zapignore']);
+
+/** Returns true for files that only the human may write through Settings. */
+export function isProjectConfigPath(path: string): boolean {
+  const basename = path.replaceAll('\\', '/').split('/').filter(Boolean).at(-1);
+  return basename !== undefined && PROJECT_CONFIG_FILES.has(basename.toLowerCase());
+}
+
 const PROTECTED_EXTENSIONS = ['.pem', '.p12', '.pfx', '.key', '.jks', '.keystore'];
 
 /** Returns true for paths that must not enter model context or generated file patches. */

@@ -6,7 +6,7 @@
 - [x] Document the four-module product flow.
 - [x] Add safety principles for local files and terminal tools.
 - [x] Create a public GitHub repository with description and topics.
-- [ ] Select and record the final open-source license.
+- [x] Select and record the final open-source license (MIT in `LICENSE`).
 - [x] Choose Electron for the desktop shell after the architecture spike.
 
 ## Phase 1 — Foundation
@@ -29,8 +29,9 @@
 - [ ] Test with Llama, DeepSeek, and Qwen-compatible GGUF models.
 - [x] Connect the local `llama-server` backend with model load, health, and completion APIs.
 - [x] Allow selecting a GGUF file directly from Downloads or any local folder.
+- [x] Inspect GGUF metadata and family compatibility without loading weights (`npm run models:check`).
 
-> The llama.cpp `llama-server` adapter and an opt-in real-GGUF smoke test are implemented. A tiny Llama3-compatible GGUF has been validated locally; the three-family compatibility matrix remains open.
+> The llama.cpp `llama-server` adapter and an opt-in real-GGUF smoke test are implemented. A tiny Llama3-compatible GGUF has been validated locally. The three-family compatibility matrix still needs real files: `src/gguf.ts` recognizes `llama`, `qwen2`, `qwen3`, `qwen2moe`, and `deepseek2`, and `docs/llama-runtime.md` records how to fill in each row with `npm run models:check` plus the real-GGUF test.
 
 ## Phase 3 — Workspace & Context
 
@@ -38,10 +39,11 @@
 - [x] Exclude secrets, build output, dependency folders, and oversized files by default.
 - [x] Add folder picker and drag-and-drop workspace loading.
 - [x] Build initial context preview and token-budget estimate UI.
-- [ ] Add project instructions and configurable ignore patterns.
+- [x] Add project instructions and configurable ignore patterns.
 - [x] Restore model and workspace settings across app restarts.
 - [x] Load selected file content in the editor and filter the indexed file paths.
 - [x] Persist and restore the last opened workspace and indexed-entry limit.
+- [x] Add editable project instructions and ignore patterns with a Settings UI (`ZAP.md`, `.zapignore`).
 
 ## Phase 4 — Autonomous Loop
 
@@ -57,7 +59,7 @@
 ## Phase 5 — Human-in-the-Loop
 
 - [x] Build a whole-file review dialog with per-file selection and batch approval.
-- [ ] Build a line-level side-by-side diff and hunk selection UI.
+- [x] Build a line-level side-by-side diff and hunk selection UI.
 - [x] Implement Approve, Reject, and feedback flows.
 - [x] Apply approved patches atomically with backup/rollback support.
 - [x] Show the current session's approved changes and provide an Undo action.
@@ -68,7 +70,7 @@
 - [x] Add unit tests for model discovery, context building, and permissions.
 - [x] Add end-to-end tests in a disposable fixture project.
 - [x] Threat-model local command execution and prompt/tool injection.
-- [ ] Benchmark model loading and context performance.
+- [x] Benchmark model loading and context performance (`npm run benchmark`, optional llama-server timing).
 - [x] Add Windows NSIS installer configuration and `npm run package:win` script.
 - [x] Add Linux x64 DEB configuration and `npm run package:deb` script.
 - [x] Write user documentation and troubleshooting guides.
@@ -86,8 +88,10 @@
 - [x] Require explicit per-command native approval and feed bounded terminal results back to the local model.
 - [x] Validate generated proposals against current disk state and return them to the human review flow without writing files.
 - [x] Bound Agent reads, command attempts, model steps, retry count, context size, and execution budget; expired command approvals do not run.
-- [ ] Add read/write manual editor mode.
-- [ ] Add user cancellation/progress events during an in-flight Agent task.
-- [ ] Add sandboxed terminal execution and configurable command allow-list.
-- [ ] Add hosted AI provider integrations (currently the Agent uses the local llama.cpp runtime).
-- [ ] Add full-text project search and an actual Git status/diff integration.
+- [x] Add read/write manual editor mode.
+- [x] Add user cancellation/progress events during an in-flight Agent task.
+- [x] Add sandboxed terminal execution and configurable command allow-list.
+- [x] Add hosted AI provider integrations (OpenAI-compatible endpoint alongside the local llama.cpp runtime).
+- [x] Add full-text project search and an actual Git status/diff integration.
+
+> "Sandboxed terminal" here means workspace-confined execution with a scrubbed child environment, blocked dangerous patterns, timeouts, and a configurable allow-list. It is defense-in-depth, not an OS-level sandbox; see `docs/threat-model.md`.

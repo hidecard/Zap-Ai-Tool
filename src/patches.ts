@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { dirname, join, relative, resolve } from 'node:path';
 import type { FileDiff } from './domain.js';
 import { isPathInsideWorkspace } from './permissions.js';
-import { isProtectedWorkspacePath } from './pathSafety.js';
+import { isProjectConfigPath, isProtectedWorkspacePath } from './pathSafety.js';
+import { decodeText, detectTextEncoding, encodeText, type TextEncoding } from './textEncoding.js';
 
 export interface PatchApplyResult {
   backupId: string;
@@ -25,6 +26,10 @@ function safeRelativePath(workspaceRoot: string, filePath: string): string {
   if (!isPathInsideWorkspace(root, absolute) || isProtectedWorkspacePath(portablePath)) {
     throw new Error(`Patch path is unsafe or outside the selected workspace: ${filePath}`);
   }
+  if (isProjectConfigPath(portablePath))
+    throw new Error(
+      `Project instruction files are human-owned and cannot be patched: ${portablePath}. Edit them in Settings.`,
+    );
   return portablePath;
 }
 
@@ -84,6 +89,7 @@ export async function applyFileDiffs(
   const backupDirectory = safeBackupDirectory(workspaceRoot, backupId);
   const manifest: BackupManifest = { backupId, createdAt: new Date().toISOString(), files: [] };
   const targets = new Set<string>();
+  const targetEncodings = new Map<string, TextEncoding>();
   await assertSafeBackupRoot(workspaceRoot);
   await mkdir(backupRoot(workspaceRoot), { recursive: true });
   await mkdir(backupDirectory);
@@ -109,9 +115,10 @@ export async function applyFileDiffs(
       if (diff.isNew === false && !existed)
         throw new Error(`Patch conflict: ${relativePath} must already exist.`);
       if (existed) {
-        const current = await readFile(target, 'utf8');
-        if (current !== diff.before)
+        const current = await readFile(target);
+        if (decodeText(current) !== diff.before)
           throw new Error(`Patch conflict: ${relativePath} changed since the draft was created.`);
+        targetEncodings.set(relativePath, detectTextEncoding(current));
       } else if (diff.before !== '') {
         throw new Error(`Patch conflict: ${relativePath} does not exist as expected.`);
       }
@@ -135,7 +142,8 @@ export async function applyFileDiffs(
       const target = join(workspaceRoot, safeRelativePath(workspaceRoot, diff.path));
       const temporaryPath = `${target}.zap-tmp-${process.pid}-${Date.now()}`;
       await mkdir(dirname(target), { recursive: true });
-      await writeFile(temporaryPath, diff.after, 'utf8');
+      const encoding = targetEncodings.get(safeRelativePath(workspaceRoot, diff.path)) ?? 'utf8';
+      await writeFile(temporaryPath, encodeText(diff.after, encoding));
       await rename(temporaryPath, target);
     }
     return { backupId, changedFiles: manifest.files.map((file) => file.path) };
@@ -143,6 +151,39 @@ export async function applyFileDiffs(
     await rollbackFileDiffs(workspaceRoot, backupId).catch(() => undefined);
     throw error;
   }
+}
+
+export const MAX_EDITABLE_FILE_BYTES = 2_000_000;
+
+/**
+ * Writes a human-edited buffer to disk through the same preflight, backup and
+ * rollback boundary as agent proposals. Returns the backup id so the edit can
+ * be undone like any other reviewed change.
+ */
+export async function writeWorkspaceFile(
+  workspaceRoot: string,
+  filePath: string,
+  content: string,
+): Promise<PatchApplyResult> {
+  if (typeof content !== 'string') throw new Error('File content must be a string.');
+  if (Buffer.byteLength(content, 'utf8') > MAX_EDITABLE_FILE_BYTES)
+    throw new Error(`Refusing to write more than ${MAX_EDITABLE_FILE_BYTES} bytes.`);
+  const relativePath = safeRelativePath(workspaceRoot, filePath);
+  const target = join(workspaceRoot, relativePath);
+  await assertNoSymlinkAncestors(workspaceRoot, relativePath);
+  await assertRegularFile(target);
+  let existed = true;
+  let before = '';
+  try {
+    before = decodeText(await readFile(target));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    existed = false;
+  }
+  if (existed && before === content) throw new Error('The file already has this content.');
+  return await applyFileDiffs(workspaceRoot, [
+    { path: relativePath, before, after: content, isNew: !existed },
+  ]);
 }
 
 export async function rollbackFileDiffs(

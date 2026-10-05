@@ -1,4 +1,4 @@
-export type ModelFormat = 'gguf';
+export type ModelFormat = 'gguf' | 'remote';
 
 export interface ModelDescriptor {
   id: string;

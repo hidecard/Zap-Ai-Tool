@@ -1,7 +1,24 @@
-import { useEffect, useMemo, useState, type DragEvent, type ReactElement } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type ReactElement,
+} from 'react';
 import type { FileDiff, ModelDescriptor, ModelManagerState, WorkspaceContext } from '../index.js';
 import { parseFileDiffProposals } from '../diffProposal.js';
+import { diffLines } from '../diff.js';
+import { createReviewSelections, narrowReviewedDiffs } from '../review.js';
+import type { AgentProgressEvent } from '../agentRunner.js';
 import type { AppSettings } from '../settings.js';
+import type { WorkspaceConfig } from '../workspace.js';
+import { Editor } from './components/Editor.js';
+import { ReviewDialog, type ReviewSelections } from './components/ReviewDialog.js';
+import { SearchPanel } from './components/SearchPanel.js';
+import { SettingsPanel } from './components/SettingsPanel.js';
+import { SourceControlPanel } from './components/SourceControlPanel.js';
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024 ** 2) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -93,7 +110,7 @@ function createPreviewState(selectedId = previewModels[0]?.id): ModelManagerStat
 }
 
 function fileIcon(path: string): string {
-  if (path.endsWith('.tsx')) return 'TS';
+  if (path.endsWith('.tsx') || path.endsWith('.ts')) return 'TS';
   if (path.endsWith('.css')) return '#';
   if (path.endsWith('.json')) return '{}';
   if (path.endsWith('.md')) return 'M';
@@ -152,6 +169,19 @@ function relatedFilePaths(
     .map((file) => file.path);
 }
 
+/** Mirrors the main-process path checks so the form can fail fast. */
+function validateNewFilePath(path: string): string | undefined {
+  if (!path) return 'Enter a path for the new file.';
+  if (path.startsWith('/') || /^[a-z]:/i.test(path))
+    return 'Use a path relative to the project root.';
+  if (path.split('/').some((part) => !part || part === '.' || part === '..'))
+    return 'Path segments must be plain names, without . or ..';
+  if (!/\.[a-z0-9]+$/i.test(path)) return 'Add a file extension, for example .ts or .md.';
+  return undefined;
+}
+
+type ReviewMode = 'closed' | 'proposal' | 'git';
+
 export function App(): ReactElement {
   const previewMode = typeof window.zap === 'undefined';
   const [models, setModels] = useState<ModelDescriptor[]>([]);
@@ -172,38 +202,52 @@ export function App(): ReactElement {
   const [fileContent, setFileContent] = useState('');
   const [fileBusy, setFileBusy] = useState(false);
   const [fileError, setFileError] = useState<string | undefined>();
+  const [fileFilter, setFileFilter] = useState('');
+  const [jumpLine, setJumpLine] = useState<number | undefined>();
+  const [editing, setEditing] = useState(false);
+  const [draftContent, setDraftContent] = useState('');
+  const [dirty, setDirty] = useState(false);
+  const [savingFile, setSavingFile] = useState(false);
   const [activeView, setActiveView] = useState('explorer');
   const [prompt, setPrompt] = useState('');
   const [agentMode, setAgentMode] = useState<'build' | 'ask' | 'agent'>('build');
   const [activity, setActivity] = useState('Ready for your next task.');
-  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewMode, setReviewMode] = useState<ReviewMode>('closed');
   const [reviewDecision, setReviewDecision] = useState<'pending' | 'approved' | 'rejected'>(
     'pending',
   );
+  const [reviewSelections, setReviewSelections] = useState<ReviewSelections>({});
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [gitDiff, setGitDiff] = useState<FileDiff | null>(null);
   const [feedback, setFeedback] = useState('');
   const [agentResponse, setAgentResponse] = useState('');
   const [requestBusy, setRequestBusy] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [progress, setProgress] = useState<AgentProgressEvent[]>([]);
   const [proposedDiffs, setProposedDiffs] = useState<FileDiff[]>([]);
-  const [selectedReviewPaths, setSelectedReviewPaths] = useState<string[]>([]);
-  const [activeReviewPath, setActiveReviewPath] = useState('');
-  const [reviewBusy, setReviewBusy] = useState(false);
   const [activityLog, setActivityLog] = useState<string[]>([
     'Zap ready · project data stays on this device.',
   ]);
-  const [searchQuery, setSearchQuery] = useState('');
   const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [maxContextFiles, setMaxContextFiles] = useState('2000');
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string | undefined>();
+  const [healthMessage, setHealthMessage] = useState('');
   const [terminalCommand, setTerminalCommand] = useState('');
   const [terminalOutput, setTerminalOutput] = useState(
     'Terminal ready · commands require an explicit Run action.',
   );
   const [terminalBusy, setTerminalBusy] = useState(false);
+  const [terminalHistory, setTerminalHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
   const [terminalTab, setTerminalTab] = useState<'terminal' | 'output'>('terminal');
   const [changeHistory, setChangeHistory] = useState<{ backupId: string; files: string[] }[]>([]);
   const [lastBuildRequest, setLastBuildRequest] = useState('');
   const [lastDraftMode, setLastDraftMode] = useState<'build' | 'agent'>('build');
+  const [creatingFile, setCreatingFile] = useState(false);
+  const [newFilePath, setNewFilePath] = useState('');
+  const [newFileBusy, setNewFileBusy] = useState(false);
+  const [newFileError, setNewFileError] = useState<string | undefined>();
+  const editAfterLoad = useRef(false);
 
   const refreshModels = async (): Promise<void> => {
     setLoading(true);
@@ -233,7 +277,6 @@ export function App(): ReactElement {
         try {
           const loadedSettings = await window.zap.getSettings();
           setSettings(loadedSettings);
-          setMaxContextFiles(String(loadedSettings.maxContextFiles));
           if (loadedSettings.workspaceDirectory) {
             const restored = await window.zap.loadWorkspace(loadedSettings.workspaceDirectory);
             setWorkspace(restored);
@@ -247,12 +290,25 @@ export function App(): ReactElement {
   }, []);
 
   useEffect(() => {
+    if (previewMode) return;
+    const unsubscribe = window.zap.onAgentProgress((event) => {
+      setProgress((items) => [...items, event].slice(-60));
+      setActivity(event.message);
+      setActivityLog((items) => [`${event.kind} · ${event.message}`, ...items].slice(0, 8));
+    });
+    return unsubscribe;
+  }, [previewMode]);
+
+  useEffect(() => {
     if (!workspace || !activeFile) {
       setFileContent('');
       setFileBusy(false);
       setFileError(undefined);
       return;
     }
+    setEditing(false);
+    setDirty(false);
+    setDraftContent('');
     if (previewMode) {
       setFileContent((previewCode[baseName(activeFile)] ?? []).join('\n'));
       setFileBusy(false);
@@ -266,9 +322,14 @@ export function App(): ReactElement {
     void window.zap
       .readWorkspaceFile(workspace.rootPath, activeFile)
       .then((content) => {
-        if (!cancelled) {
-          setFileContent(content);
-          setFileBusy(false);
+        if (cancelled) return;
+        setFileContent(content);
+        setFileBusy(false);
+        // A freshly created file opens straight into edit mode.
+        if (editAfterLoad.current) {
+          editAfterLoad.current = false;
+          setDraftContent(content);
+          setEditing(true);
         }
       })
       .catch((error: unknown) => {
@@ -303,6 +364,20 @@ export function App(): ReactElement {
         status: 'error',
         error: error instanceof Error ? error.message : String(error),
       }));
+    }
+  };
+
+  const checkHealth = async (): Promise<void> => {
+    if (previewMode || settingsBusy) return;
+    setSettingsBusy(true);
+    try {
+      const result = await window.zap.checkModelHealth();
+      setState(result.state);
+      setHealthMessage(result.message);
+    } catch (error) {
+      setHealthMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSettingsBusy(false);
     }
   };
 
@@ -366,26 +441,116 @@ export function App(): ReactElement {
       workspace?.files.filter(
         (file) =>
           file.kind === 'file' &&
-          file.relativePath.toLowerCase().includes(searchQuery.toLowerCase()),
+          file.relativePath.toLowerCase().includes(fileFilter.toLowerCase()),
       ) ?? [],
-    [searchQuery, workspace],
+    [fileFilter, workspace],
   );
   const changedFiles = useMemo(
     () => [...new Set(changeHistory.flatMap((change) => change.files))],
     [changeHistory],
   );
   const lastBackupId = changeHistory.at(-1)?.backupId;
-  const activeReviewDiff =
-    proposedDiffs.find((diff) => diff.path === activeReviewPath) ?? proposedDiffs[0];
   const activePath = activeFile;
   const activeName = baseName(activePath);
-  const code = activePath ? fileContent.split(/\r?\n/) : [];
+  const pendingDiffs = reviewDecision === 'pending' ? proposedDiffs : [];
+
+  const openSearchResult = useCallback((path: string, line: number) => {
+    setActiveView('explorer');
+    setActiveFile(path);
+    setJumpLine(line);
+  }, []);
+
+  const startEdit = (): void => {
+    if (!activePath) return;
+    setDraftContent(fileContent);
+    setDirty(false);
+    setEditing(true);
+  };
+
+  const stopEdit = useCallback((): void => {
+    if (dirty && !window.confirm('Discard unsaved changes?')) return;
+    setEditing(false);
+    setDraftContent('');
+    setDirty(false);
+  }, [dirty]);
+
+  const createFile = async (): Promise<void> => {
+    if (previewMode || newFileBusy || !workspace) return;
+    const path = newFilePath.trim().replaceAll('\\', '/');
+    const problem = validateNewFilePath(path);
+    if (problem) {
+      setNewFileError(problem);
+      return;
+    }
+    setNewFileBusy(true);
+    setNewFileError(undefined);
+    try {
+      const result = await window.zap.writeWorkspaceFile(workspace.rootPath, path, '');
+      setChangeHistory((current) => [
+        ...current,
+        { backupId: result.backupId, files: result.changedFiles },
+      ]);
+      setWorkspace(await window.zap.loadWorkspace(workspace.rootPath));
+      editAfterLoad.current = true;
+      setActiveFile(path);
+      setCreatingFile(false);
+      setNewFilePath('');
+      setActivity(`Created ${path} · backup ${result.backupId}`);
+      setActivityLog((items) => [`Created ${path}`, ...items].slice(0, 8));
+    } catch (error) {
+      setNewFileError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setNewFileBusy(false);
+    }
+  };
+
+  const saveFile = async (): Promise<void> => {
+    if (previewMode || savingFile || !workspace || !activePath) return;
+    setSavingFile(true);
+    setFileError(undefined);
+    try {
+      const result = await window.zap.writeWorkspaceFile(
+        workspace.rootPath,
+        activePath,
+        draftContent,
+      );
+      setChangeHistory((current) => [
+        ...current,
+        { backupId: result.backupId, files: result.changedFiles },
+      ]);
+      setFileContent(draftContent);
+      setEditing(false);
+      setDirty(false);
+      setWorkspace(await window.zap.loadWorkspace(workspace.rootPath));
+      setActivity(`Saved ${activePath} · backup ${result.backupId}`);
+      setActivityLog((items) => [`Saved ${activePath}`, ...items].slice(0, 8));
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSavingFile(false);
+    }
+  };
+
+  const reloadFile = (): void => {
+    if (!workspace || !activePath || previewMode) return;
+    void window.zap
+      .readWorkspaceFile(workspace.rootPath, activePath)
+      .then((content) => {
+        setFileContent(content);
+        setFileError(undefined);
+        setActivity(`Reloaded ${activePath} from disk.`);
+      })
+      .catch((error: unknown) =>
+        setFileError(error instanceof Error ? error.message : String(error)),
+      );
+  };
+
   const runPrompt = async (): Promise<void> => {
     if (requestBusy || !prompt.trim()) return;
     const request = prompt.trim();
     if (!previewMode && state.status !== 'ready') {
       setActivity('Select a model and wait until it is ready before sending a prompt.');
-      setActivityLog((items) => ['Prompt blocked · no ready model', ...items].slice(0, 5));
+      setActivityLog((items) => ['Prompt blocked · no ready model', ...items].slice(0, 8));
       return;
     }
     if (agentMode === 'build' && (!workspace || !activePath)) {
@@ -405,16 +570,18 @@ export function App(): ReactElement {
       reviewDecision === 'pending' &&
       proposedDiffs.length > 0
     ) {
-      setReviewOpen(true);
+      setReviewMode('proposal');
       setActivity('Review or reject the pending file batch before starting another Build request.');
       return;
     }
     setRequestBusy(true);
+    setCancelling(false);
+    setProgress([]);
     setAgentResponse('');
     setActivity(
       `${agentMode === 'ask' ? 'Answering' : agentMode === 'agent' ? 'Agent running' : 'Planning'}: ${request}`,
     );
-    setActivityLog((items) => [`Agent started · ${request}`, ...items].slice(0, 5));
+    setActivityLog((items) => [`Agent started · ${request}`, ...items].slice(0, 8));
     try {
       if (previewMode) {
         setAgentResponse(
@@ -433,13 +600,10 @@ export function App(): ReactElement {
         );
         if (result.diffs.length > 0) {
           setProposedDiffs(result.diffs);
-          setSelectedReviewPaths(result.diffs.map((diff) => diff.path));
-          setActiveReviewPath(result.diffs[0]?.path ?? '');
-          setLastBuildRequest(request);
-          setLastDraftMode('agent');
+          setReviewSelections(createReviewSelections(result.diffs));
           setFeedback('');
           setReviewDecision('pending');
-          setReviewOpen(true);
+          setReviewMode('proposal');
           setActivity(`Agent prepared ${result.diffs.length} file(s) · review required.`);
         }
       } else {
@@ -492,7 +656,7 @@ export function App(): ReactElement {
           `${agentMode === 'ask' ? 'Answer' : 'Plan'} ready · ${result.tokensPredicted ?? 0} tokens`,
         );
         setActivityLog((items) =>
-          [`${agentMode === 'ask' ? 'Answer' : 'Plan'} received`, ...items].slice(0, 5),
+          [`${agentMode === 'ask' ? 'Answer' : 'Plan'} received`, ...items].slice(0, 8),
         );
         if (agentMode === 'build' && workspace) {
           const proposals = parseFileDiffProposals(result.content);
@@ -527,11 +691,10 @@ export function App(): ReactElement {
               `${invalidProposal ?? 'Model returned no safe file proposal.'} Nothing was changed.`,
             );
             setActivity('Model returned no safe file proposal; nothing to review.');
-            setActivityLog((items) => ['No safe diff · no files changed', ...items].slice(0, 5));
+            setActivityLog((items) => ['No safe diff · no files changed', ...items].slice(0, 8));
           } else {
             setProposedDiffs(proposals);
-            setSelectedReviewPaths(proposals.map((proposal) => proposal.path));
-            setActiveReviewPath(proposals[0]?.path ?? '');
+            setReviewSelections(createReviewSelections(proposals));
             setAgentResponse(
               `Draft ready · ${proposals.length} file${proposals.length === 1 ? '' : 's'} proposed for review.`,
             );
@@ -539,7 +702,7 @@ export function App(): ReactElement {
             setLastDraftMode('build');
             setFeedback('');
             setReviewDecision('pending');
-            setReviewOpen(true);
+            setReviewMode('proposal');
             setActivity(
               `Draft ready · ${proposals.length} file${proposals.length === 1 ? '' : 's'} require review.`,
             );
@@ -550,33 +713,51 @@ export function App(): ReactElement {
       const message = error instanceof Error ? error.message : String(error);
       setAgentResponse(`Model request failed: ${message}`);
       setActivity('Model request failed.');
-      setActivityLog((items) => ['Model request failed', ...items].slice(0, 5));
+      setActivityLog((items) => ['Model request failed', ...items].slice(0, 8));
     } finally {
       setRequestBusy(false);
+      setCancelling(false);
     }
     setPrompt('');
   };
 
-  const saveContextSettings = async (): Promise<void> => {
-    if (previewMode || requestBusy || settingsBusy) return;
-    const limit = Number(maxContextFiles);
-    if (!Number.isFinite(limit) || limit < 100 || limit > 10_000) {
-      setSettingsError('Choose a file limit between 100 and 10,000.');
-      return;
+  const cancelAgentTask = async (): Promise<void> => {
+    if (previewMode || !requestBusy) return;
+    setCancelling(true);
+    setActivity('Stopping the current task…');
+    try {
+      await window.zap.cancelAgentTask();
+    } catch (error) {
+      setActivity(`Cancel failed: ${error instanceof Error ? error.message : String(error)}`);
+      setCancelling(false);
     }
+  };
+
+  const updateSettings = async (patch: Partial<AppSettings>): Promise<void> => {
+    if (previewMode || requestBusy || settingsBusy) return;
     setSettingsBusy(true);
     setSettingsError(undefined);
     try {
-      const updated = await window.zap.updateMaxContextFiles(limit);
+      const updated = await window.zap.updateSettings(patch);
       setSettings(updated);
-      setMaxContextFiles(String(updated.maxContextFiles));
-      if (workspace) setWorkspace(await window.zap.loadWorkspace(workspace.rootPath));
-      setActivity('Settings saved · project context refreshed.');
+      setState(updated.state);
+      setHealthMessage('');
+      if (patch.provider !== undefined) await refreshModels();
+      if (patch.maxContextFiles !== undefined && workspace)
+        setWorkspace(await window.zap.loadWorkspace(workspace.rootPath));
+      setActivity('Settings saved.');
     } catch (error) {
       setSettingsError(error instanceof Error ? error.message : String(error));
     } finally {
       setSettingsBusy(false);
     }
+  };
+
+  const saveProjectConfig = async (config: WorkspaceConfig): Promise<void> => {
+    if (previewMode || !workspace) return;
+    await window.zap.saveWorkspaceConfig(workspace.rootPath, config);
+    setWorkspace(await window.zap.loadWorkspace(workspace.rootPath));
+    setActivity('Project rules saved · context rebuilt.');
   };
 
   const chooseModelsDirectory = async (): Promise<void> => {
@@ -607,7 +788,7 @@ export function App(): ReactElement {
         setSettings(updated);
         await refreshModels();
         setActivity('GGUF model added · choose it from the model selector.');
-        setActivityLog((items) => ['Model added from any folder', ...items].slice(0, 5));
+        setActivityLog((items) => ['Model added from any folder', ...items].slice(0, 8));
       }
     } catch (error) {
       setSettingsError(error instanceof Error ? error.message : String(error));
@@ -626,6 +807,10 @@ export function App(): ReactElement {
     setTerminalBusy(true);
     setTerminalOutput(`$ ${command}\nRunning…`);
     setActivity(`Running terminal command · ${command}`);
+    setTerminalHistory((items) =>
+      [command, ...items.filter((item) => item !== command)].slice(0, 50),
+    );
+    setHistoryIndex(-1);
     try {
       const result = await window.zap.runTerminal(workspace.rootPath, command);
       const output = [result.stdout.trimEnd(), result.stderr.trimEnd()].filter(Boolean).join('\n');
@@ -636,15 +821,28 @@ export function App(): ReactElement {
           : `Exited with code ${result.exitCode ?? 'unknown'} in ${result.durationMs} ms.`;
       setTerminalOutput([`$ ${command}`, output, outcome].filter(Boolean).join('\n'));
       setActivity(outcome);
-      setActivityLog((items) => [`Terminal · ${outcome}`, ...items].slice(0, 5));
+      setActivityLog((items) => [`Terminal · ${outcome}`, ...items].slice(0, 8));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setTerminalOutput(`$ ${command}\nBlocked or failed: ${message}`);
       setActivity('Terminal command blocked or failed.');
+      setActivityLog((items) => [`Terminal blocked · ${message}`, ...items].slice(0, 8));
     } finally {
       setTerminalBusy(false);
       setTerminalCommand('');
     }
+  };
+
+  const cancelTerminalCommand = async (): Promise<void> => {
+    if (previewMode) return;
+    await window.zap.cancelTerminal().catch(() => undefined);
+  };
+
+  const stepTerminalHistory = (direction: -1 | 1): void => {
+    if (terminalHistory.length === 0) return;
+    const next = Math.min(Math.max(historyIndex + direction, -1), terminalHistory.length - 1);
+    setHistoryIndex(next);
+    setTerminalCommand(next === -1 ? '' : (terminalHistory[next] ?? ''));
   };
 
   const undoLatestChange = async (): Promise<void> => {
@@ -656,70 +854,86 @@ export function App(): ReactElement {
       setWorkspace(refreshed);
       if (activePath)
         setFileContent(await window.zap.readWorkspaceFile(workspace.rootPath, activePath));
+      setEditing(false);
+      setDirty(false);
       setActivity('Last approved change rolled back.');
-      setActivityLog((items) => ['Undo · last patch restored', ...items].slice(0, 5));
+      setActivityLog((items) => ['Undo · last change restored', ...items].slice(0, 8));
     } catch (error) {
       setWorkspaceError(`Undo failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
 
-  const decideReview = async (decision: 'approved' | 'rejected'): Promise<void> => {
-    const selectedDiffs = proposedDiffs.filter((diff) => selectedReviewPaths.includes(diff.path));
-    if (decision === 'approved' && !previewMode && workspace && proposedDiffs.length > 0) {
-      if (selectedDiffs.length === 0) return;
-      setReviewBusy(true);
-      try {
-        const result = await window.zap.applyPatches(workspace.rootPath, selectedDiffs);
-        setChangeHistory((current) => [
-          ...current,
-          { backupId: result.backupId, files: result.changedFiles },
-        ]);
-        const activeDiff =
-          selectedDiffs.find((diff) => diff.path === activePath) ?? selectedDiffs[0];
-        if (activeDiff) {
-          setActiveFile(activeDiff.path);
-          setFileContent(activeDiff.after);
-        }
-        try {
-          setWorkspace(await window.zap.loadWorkspace(workspace.rootPath));
-        } catch (error) {
-          setWorkspaceError(
-            `Changes were applied, but the project list could not refresh: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-        setActivity(`Approved change · backup ${result.backupId}`);
-      } catch (error) {
-        setActivity(`Patch blocked · ${error instanceof Error ? error.message : String(error)}`);
-        setActivityLog((items) => ['Patch blocked · no files changed', ...items].slice(0, 5));
-        return;
-      } finally {
-        setReviewBusy(false);
+  const applyReview = async (): Promise<void> => {
+    const diffs = narrowReviewedDiffs(proposedDiffs, reviewSelections);
+    if (diffs.length === 0 || !workspace || previewMode) return;
+    setReviewBusy(true);
+    try {
+      const result = await window.zap.applyPatches(workspace.rootPath, diffs);
+      setChangeHistory((current) => [
+        ...current,
+        { backupId: result.backupId, files: result.changedFiles },
+      ]);
+      const activeDiff = diffs.find((diff) => diff.path === activePath) ?? diffs[0];
+      if (activeDiff) {
+        setActiveFile(activeDiff.path);
+        setFileContent(activeDiff.after);
+        setEditing(false);
+        setDirty(false);
       }
+      try {
+        setWorkspace(await window.zap.loadWorkspace(workspace.rootPath));
+      } catch (error) {
+        setWorkspaceError(
+          `Changes were applied, but the project list could not refresh: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      setReviewDecision('approved');
+      setProposedDiffs([]);
+      setReviewSelections({});
+      setReviewMode('closed');
+      setActivity(`Approved ${result.changedFiles.length} file(s) · backup ${result.backupId}`);
+      setActivityLog((items) => ['Change approved · backup created', ...items].slice(0, 8));
+    } catch (error) {
+      setActivity(`Patch blocked · ${error instanceof Error ? error.message : String(error)}`);
+      setActivityLog((items) => ['Patch blocked · no files changed', ...items].slice(0, 8));
+    } finally {
+      setReviewBusy(false);
     }
-    setReviewDecision(decision);
-    setReviewOpen(false);
-    if (decision === 'approved' || decision === 'rejected') setProposedDiffs([]);
-    if (decision === 'rejected' && feedback.trim()) {
+  };
+
+  const rejectReview = (): void => {
+    setReviewDecision('rejected');
+    setProposedDiffs([]);
+    setReviewSelections({});
+    setReviewMode('closed');
+    if (feedback.trim()) {
       setPrompt(
         `${lastBuildRequest}\n\nPlease revise the draft using this review feedback:\n${feedback.trim()}`,
       );
       setAgentMode(lastDraftMode);
     }
     setActivity(
-      decision === 'approved'
-        ? 'Approved change · backup created'
-        : feedback.trim()
-          ? 'Draft rejected · feedback added to the next Build request.'
-          : 'Rejected draft · no files changed',
+      feedback.trim()
+        ? 'Draft rejected · feedback added to the next Build request.'
+        : 'Rejected draft · no files changed',
     );
-    setActivityLog((items) =>
-      [
-        decision === 'approved'
-          ? 'Change approved · backup created'
-          : 'Draft rejected · no files changed',
-        ...items,
-      ].slice(0, 5),
-    );
+    setActivityLog((items) => ['Draft rejected · no files changed', ...items].slice(0, 8));
+  };
+
+  const openGitDiff = async (path: string): Promise<void> => {
+    if (previewMode || !workspace) return;
+    try {
+      const result = await window.zap.gitDiff(workspace.rootPath, path);
+      if (!result) {
+        setWorkspaceError(`No Git diff available for ${path}.`);
+        return;
+      }
+      setGitDiff(result.diff);
+      setReviewSelections(createReviewSelections([result.diff]));
+      setReviewMode('git');
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    }
   };
 
   return (
@@ -755,9 +969,12 @@ export function App(): ReactElement {
           <button
             className={activeView === 'source' ? 'activity-button active' : 'activity-button'}
             onClick={() => setActiveView('source')}
-            title="Approved changes"
+            title="Source control"
           >
-            ⑂{changedFiles.length > 0 && <span>{changedFiles.length}</span>}
+            ⑂
+            {(pendingDiffs.length > 0 || changedFiles.length > 0) && (
+              <span>{pendingDiffs.length + changedFiles.length}</span>
+            )}
           </button>
           <div className="activity-spacer" />
           <button
@@ -771,27 +988,107 @@ export function App(): ReactElement {
         <aside className="explorer-panel">
           <div className="explorer-heading">
             <span>EXPLORER</span>
-            <button
-              onClick={() => void chooseWorkspace()}
-              title="Open folder"
-              disabled={workspaceBusy || requestBusy}
-            >
-              {workspaceBusy ? '…' : '＋'}
-            </button>
+            <div className="explorer-heading-actions">
+              <button
+                onClick={() => {
+                  setCreatingFile((open) => !open);
+                  setNewFileError(undefined);
+                }}
+                title="New file in this project"
+                disabled={!workspace || previewMode || requestBusy}
+              >
+                ＋
+              </button>
+              <button
+                onClick={() => void chooseWorkspace()}
+                title="Open folder"
+                disabled={workspaceBusy || requestBusy}
+              >
+                {workspaceBusy ? '…' : '🗀'}
+              </button>
+            </div>
           </div>
+          {creatingFile && (
+            <form
+              className="new-file-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void createFile();
+              }}
+            >
+              <input
+                value={newFilePath}
+                onChange={(event) => setNewFilePath(event.target.value)}
+                placeholder="src/feature.ts"
+                aria-label="Path for the new file"
+                autoFocus
+              />
+              <div className="new-file-actions">
+                <button type="submit" disabled={newFileBusy}>
+                  {newFileBusy ? 'Creating…' : 'Create'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreatingFile(false);
+                    setNewFileError(undefined);
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+              {newFileError && <small className="inline-error">{newFileError}</small>}
+            </form>
+          )}
           <div className="workspace-name">
             ⌄ &nbsp; {workspace ? baseName(workspace.rootPath) : 'NO FOLDER OPENED'}
           </div>
           {activeView === 'search' ? (
+            <SearchPanel
+              workspace={workspace}
+              previewMode={previewMode}
+              previewFiles={previewCode}
+              onOpenResult={openSearchResult}
+            />
+          ) : activeView === 'source' ? (
+            <SourceControlPanel
+              workspace={workspace}
+              previewMode={previewMode}
+              changedFiles={changedFiles}
+              pendingCount={pendingDiffs.length}
+              canUndo={lastBackupId !== undefined}
+              busy={requestBusy}
+              onOpenPending={() => setReviewMode('proposal')}
+              onOpenGitDiff={(path) => void openGitDiff(path)}
+              onUndo={() => void undoLatestChange()}
+            />
+          ) : activeView === 'settings' ? (
+            <SettingsPanel
+              settings={settings}
+              workspace={workspace}
+              previewMode={previewMode}
+              busy={settingsBusy}
+              error={settingsError}
+              healthMessage={healthMessage}
+              onUpdateSettings={updateSettings}
+              onChooseModelsDirectory={chooseModelsDirectory}
+              onChooseModelFile={chooseModelFile}
+              onCheckHealth={checkHealth}
+              onSaveProjectConfig={saveProjectConfig}
+            />
+          ) : workspace ? (
             <>
-              <div className="utility-panel">
-                <label>SEARCH PROJECT FILES</label>
+              <div className="file-filter">
                 <input
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
+                  value={fileFilter}
+                  onChange={(event) => setFileFilter(event.target.value)}
                   placeholder="Filter by file path…"
+                  aria-label="Filter files by path"
                 />
-                <small>{files.length} matching files · local only</small>
+                <small>
+                  {files.length} of {workspace.files.filter((file) => file.kind === 'file').length}{' '}
+                  files
+                </small>
               </div>
               <div className="file-tree">
                 {files.map((file) => (
@@ -802,111 +1099,16 @@ export function App(): ReactElement {
                     key={file.relativePath}
                     onClick={() => {
                       setActiveFile(file.relativePath);
-                      setActiveView('explorer');
+                      setJumpLine(undefined);
                     }}
                   >
                     <span className="file-icon">{fileIcon(baseName(file.relativePath))}</span>
                     <span>{file.relativePath}</span>
                   </button>
                 ))}
+                {files.length === 0 && <small>No files match this filter.</small>}
               </div>
             </>
-          ) : activeView === 'source' ? (
-            <div className="utility-panel source-panel">
-              <label>APPROVED CHANGES</label>
-              {proposedDiffs.length > 0 && reviewDecision === 'pending' && (
-                <button className="change-row pending-change" onClick={() => setReviewOpen(true)}>
-                  <span>R</span>
-                  <span>{proposedDiffs[0]?.path}</span>
-                  <b>{proposedDiffs.length} TO REVIEW</b>
-                </button>
-              )}
-              {changedFiles.map((path) => (
-                <div className="change-row" key={path}>
-                  <span>M</span>
-                  <span>{path}</span>
-                  <b>APPLIED</b>
-                </div>
-              ))}
-              {changedFiles.length === 0 &&
-                !(proposedDiffs.length > 0 && reviewDecision === 'pending') && (
-                  <small>No approved changes in this session yet.</small>
-                )}
-              {lastBackupId && (
-                <button className="settings-action" onClick={() => void undoLatestChange()}>
-                  Undo last approved change
-                </button>
-              )}
-              <small>Only reviewed and approved changes are written to disk and listed here.</small>
-            </div>
-          ) : activeView === 'settings' ? (
-            <div className="utility-panel settings-panel">
-              <label>SETTINGS</label>
-              <div className="setting-row">
-                <span>Model directory</span>
-                <b>{settings ? 'LOCAL' : '…'}</b>
-              </div>
-              <small className="path-setting">
-                {settings?.modelsDirectory ?? 'Loading settings…'}
-              </small>
-              <button
-                className="settings-action"
-                onClick={() => void chooseModelsDirectory()}
-                disabled={settingsBusy || requestBusy || previewMode}
-              >
-                Choose model folder
-              </button>
-              <button
-                className="settings-action primary"
-                onClick={() => void chooseModelFile()}
-                disabled={settingsBusy || requestBusy || previewMode}
-              >
-                Add GGUF from Downloads / any folder
-              </button>
-              {settings?.modelPaths && settings.modelPaths.length > 0 && (
-                <small>{settings.modelPaths.length} external GGUF model(s) remembered.</small>
-              )}
-              <div className="setting-row">
-                <span>Workspace entry limit</span>
-                <b>100–10,000</b>
-              </div>
-              <input
-                type="number"
-                min={100}
-                max={10_000}
-                step={100}
-                value={maxContextFiles}
-                onChange={(event) => setMaxContextFiles(event.target.value)}
-                disabled={settingsBusy || requestBusy || previewMode}
-              />
-              <button
-                className="settings-action primary"
-                onClick={() => void saveContextSettings()}
-                disabled={settingsBusy || requestBusy || previewMode || !settings}
-              >
-                {settingsBusy ? 'Saving…' : 'Save and refresh project'}
-              </button>
-              <small>The most recently opened project is restored next time.</small>
-              {settingsError && <small className="inline-error">{settingsError}</small>}
-            </div>
-          ) : workspace ? (
-            <div className="file-tree">
-              {files.map((file) => {
-                const name = baseName(file.relativePath);
-                return (
-                  <button
-                    className={
-                      activeFile === file.relativePath ? 'tree-file selected' : 'tree-file'
-                    }
-                    key={file.relativePath}
-                    onClick={() => setActiveFile(file.relativePath)}
-                  >
-                    <span className="file-icon">{fileIcon(name)}</span>
-                    <span>{file.relativePath}</span>
-                  </button>
-                );
-              })}
-            </div>
           ) : (
             <div className="empty-explorer">
               <span>◫</span>
@@ -926,6 +1128,7 @@ export function App(): ReactElement {
               value={state.selectedId ?? ''}
               onChange={(event) => void selectModel(event.target.value)}
               disabled={loading || requestBusy || models.length === 0}
+              aria-label="Model selector"
             >
               <option value="">{loading ? 'Scanning…' : 'Select model'}</option>
               {models.map((model) => (
@@ -936,8 +1139,15 @@ export function App(): ReactElement {
             </select>
             {selected && (
               <small>
-                {formatBytes(selected.sizeBytes)} · {selected.path}
+                {selected.format === 'remote' ? 'HOSTED' : formatBytes(selected.sizeBytes)} ·{' '}
+                {selected.path}
               </small>
+            )}
+            {state.error && <small className="inline-error">{state.error}</small>}
+            {!loading && models.length === 0 && !state.error && (
+              <button className="model-hint" onClick={() => setActiveView('settings')}>
+                No GGUF model found — add one in Settings
+              </button>
             )}
           </div>
         </aside>
@@ -946,6 +1156,7 @@ export function App(): ReactElement {
             <div className="editor-tab active">
               <span className="file-icon">{fileIcon(activeName)}</span>
               {activeName || 'No file selected'}
+              {dirty && <b className="dot-dirty" title="Unsaved changes" />}
               <button
                 className="tab-close"
                 title="Open the first project file"
@@ -955,18 +1166,31 @@ export function App(): ReactElement {
               </button>
             </div>
             <div className="editor-actions">
+              {editing ? (
+                <>
+                  <button
+                    onClick={() => void saveFile()}
+                    disabled={savingFile || !dirty || previewMode}
+                  >
+                    {savingFile ? 'Saving…' : 'Save'}
+                  </button>
+                  <button onClick={stopEdit} disabled={savingFile}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={startEdit}
+                  disabled={
+                    !workspace || !activePath || previewMode || fileBusy || fileError !== undefined
+                  }
+                >
+                  Edit
+                </button>
+              )}
               <button
                 title="Reload the selected file from disk"
-                onClick={() => {
-                  if (workspace && activePath && !previewMode) {
-                    void window.zap
-                      .readWorkspaceFile(workspace.rootPath, activePath)
-                      .then(setFileContent)
-                      .catch((error: unknown) =>
-                        setFileError(error instanceof Error ? error.message : String(error)),
-                      );
-                  }
-                }}
+                onClick={reloadFile}
                 disabled={!workspace || !activePath || previewMode}
               >
                 Reload
@@ -988,22 +1212,25 @@ export function App(): ReactElement {
                 ))}
               <strong>{activeName || 'Select a file from the project'}</strong>
             </div>
-            <div className="code-view">
-              {fileBusy ? (
-                <div className="editor-state">Loading file…</div>
-              ) : fileError ? (
-                <div className="editor-state error">Could not read file: {fileError}</div>
-              ) : !activePath ? (
-                <div className="editor-state">Open a project and choose a file to inspect it.</div>
-              ) : (
-                code.map((line, index) => (
-                  <div className="code-line" key={`${activePath}-${index}`}>
-                    <span className="line-number">{index + 1}</span>
-                    <code>{line || ' '}</code>
-                  </div>
-                ))
-              )}
-            </div>
+            <Editor
+              activePath={activePath}
+              content={editing ? draftContent : fileContent}
+              busy={fileBusy}
+              error={fileError}
+              editing={editing}
+              dirty={dirty}
+              saving={savingFile}
+              canEdit={Boolean(workspace) && !fileError && !fileBusy}
+              {...(jumpLine === undefined ? {} : { jumpLine })}
+              onStartEdit={startEdit}
+              onStopEdit={stopEdit}
+              onChange={(value) => {
+                setDraftContent(value);
+                setDirty(value !== fileContent);
+              }}
+              onSave={() => void saveFile()}
+              onReload={reloadFile}
+            />
           </div>
           <div className="terminal-panel">
             <div className="terminal-tabs">
@@ -1047,6 +1274,11 @@ export function App(): ReactElement {
                       if (event.key === 'Enter' && !event.shiftKey) {
                         event.preventDefault();
                         void runTerminalCommand();
+                        return;
+                      }
+                      if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+                        event.preventDefault();
+                        stepTerminalHistory(event.key === 'ArrowUp' ? -1 : 1);
                       }
                     }}
                     placeholder={
@@ -1057,18 +1289,16 @@ export function App(): ReactElement {
                     disabled={!workspace || previewMode || terminalBusy || requestBusy}
                     aria-label="Terminal command"
                   />
-                  <button
-                    onClick={() => void runTerminalCommand()}
-                    disabled={
-                      !workspace ||
-                      previewMode ||
-                      !terminalCommand.trim() ||
-                      terminalBusy ||
-                      requestBusy
-                    }
-                  >
-                    {terminalBusy ? 'Running…' : 'Run'}
-                  </button>
+                  {terminalBusy ? (
+                    <button onClick={() => void cancelTerminalCommand()}>Stop</button>
+                  ) : (
+                    <button
+                      onClick={() => void runTerminalCommand()}
+                      disabled={!workspace || previewMode || !terminalCommand.trim() || requestBusy}
+                    >
+                      Run
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -1106,6 +1336,32 @@ export function App(): ReactElement {
             <div className="agent-response" aria-live="polite">
               <span className="agent-avatar">Z</span>
               <pre>{agentResponse}</pre>
+            </div>
+          )}
+          {progress.length > 0 && (
+            <div className="agent-progress" aria-live="polite">
+              <div className="agent-progress-head">
+                <span>
+                  Step {progress.at(-1)?.step ?? 0} of {progress.at(-1)?.maxSteps ?? 0} ·{' '}
+                  {progress.at(-1)?.status ?? 'inspect'}
+                </span>
+                {requestBusy && (
+                  <button
+                    type="button"
+                    onClick={() => void cancelAgentTask()}
+                    disabled={cancelling}
+                  >
+                    {cancelling ? 'Stopping…' : 'Stop'}
+                  </button>
+                )}
+              </div>
+              <ul>
+                {progress.slice(-6).map((event, index) => (
+                  <li key={`${event.at}-${index}`} className={event.kind}>
+                    {event.message}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
           <div className="suggestion-list">
@@ -1203,8 +1459,13 @@ export function App(): ReactElement {
           {activeName.includes('.') ? activeName.split('.').pop()?.toUpperCase() : 'Plain text'}
         </span>
         <span className="statusbar-spacer" />
-        <span>{code.length} lines</span>
-        <span>◉ Local model</span>
+        <span>
+          {dirty ? 'unsaved · ' : ''}
+          {fileContent ? fileContent.split(/\r?\n/).length : 0} lines
+        </span>
+        <span>
+          ◉ {settings?.provider?.kind === 'openai-compatible' ? 'Hosted model' : 'Local model'}
+        </span>
       </footer>
       <div
         className="drop-catcher"
@@ -1212,111 +1473,64 @@ export function App(): ReactElement {
         onDrop={handleDrop}
       />
       {workspaceError && <div className="toast-error">{workspaceError}</div>}
-      {reviewOpen && proposedDiffs.length > 0 && (
-        <div
-          className="review-backdrop"
-          role="presentation"
-          onClick={() => !reviewBusy && setReviewOpen(false)}
-        >
-          <section
-            className="review-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="review-title"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="review-header">
-              <div>
-                <p className="eyebrow">PROPOSED CHANGES · REVIEW REQUIRED</p>
-                <h2 id="review-title">
-                  Review {proposedDiffs.length} file{proposedDiffs.length === 1 ? '' : 's'}
-                </h2>
-              </div>
-              <button onClick={() => !reviewBusy && setReviewOpen(false)} disabled={reviewBusy}>
-                ×
-              </button>
-            </div>
-            <div className="review-files-layout">
-              <div className="review-file-list" aria-label="Files in proposed change">
-                {proposedDiffs.map((diff) => (
-                  <div className="review-file-row" key={diff.path}>
-                    <input
-                      type="checkbox"
-                      checked={selectedReviewPaths.includes(diff.path)}
-                      onChange={(event) => {
-                        const checked = event.target.checked;
-                        setSelectedReviewPaths((current) =>
-                          checked
-                            ? [...current, diff.path]
-                            : current.filter((path) => path !== diff.path),
-                        );
-                      }}
-                      aria-label={`Include ${diff.path}`}
-                      disabled={reviewBusy}
-                    />
-                    <button
-                      className={activeReviewDiff?.path === diff.path ? 'active' : ''}
-                      onClick={() => setActiveReviewPath(diff.path)}
-                      disabled={reviewBusy}
-                      type="button"
-                    >
-                      <span>{diff.path}</span>
-                      {diff.isNew && <small>NEW</small>}
-                    </button>
-                  </div>
-                ))}
-              </div>
-              {activeReviewDiff && (
-                <div className="review-file-detail">
-                  <div className="diff-meta">
-                    <span>{activeReviewDiff.path}</span>
-                    <span className="diff-count">
-                      {activeReviewDiff.isNew ? 'New file' : 'Review before apply'}
-                    </span>
-                  </div>
-                  <div className="diff-view">
-                    <div className="diff-line removed">
-                      <span>−</span>
-                      <code>{activeReviewDiff.before || '(empty file / new file)'}</code>
-                    </div>
-                    <div className="diff-line added">
-                      <span>+</span>
-                      <code>{activeReviewDiff.after || '(empty file)'}</code>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-            <textarea
-              value={feedback}
-              onChange={(event) => setFeedback(event.target.value)}
-              placeholder="Optional feedback for the agent…"
-              disabled={reviewBusy}
-            />
-            <div className="review-footer">
-              <span>
-                {selectedReviewPaths.length} of {proposedDiffs.length} selected · no files are
-                changed until approval.
-              </span>
-              <div>
-                <button
-                  className="reject-button"
-                  onClick={() => void decideReview('rejected')}
-                  disabled={reviewBusy}
-                >
-                  Reject
-                </button>
-                <button
-                  className="approve-button"
-                  onClick={() => void decideReview('approved')}
-                  disabled={reviewBusy || selectedReviewPaths.length === 0}
-                >
-                  {reviewBusy ? 'Applying…' : 'Approve & Apply'}
-                </button>
-              </div>
-            </div>
-          </section>
-        </div>
+      {reviewMode === 'proposal' && proposedDiffs.length > 0 && (
+        <ReviewDialog
+          title={`Review ${proposedDiffs.length} file${proposedDiffs.length === 1 ? '' : 's'}`}
+          subtitle="PROPOSED CHANGES · REVIEW REQUIRED"
+          diffs={proposedDiffs}
+          selections={reviewSelections}
+          busy={reviewBusy}
+          feedback={feedback}
+          onFeedbackChange={setFeedback}
+          onSelectFile={(path, selected) =>
+            setReviewSelections((current) => {
+              const existing = current[path] ?? { selected, hunkIds: [] };
+              return { ...current, [path]: { selected, hunkIds: existing.hunkIds } };
+            })
+          }
+          onSetHunkSelection={(path, hunkIds) =>
+            setReviewSelections((current) => ({
+              ...current,
+              [path]: { selected: true, hunkIds },
+            }))
+          }
+          onSelectAllFiles={(selected) =>
+            setReviewSelections((current) => {
+              const next: ReviewSelections = { ...current };
+              for (const diff of proposedDiffs)
+                next[diff.path] = {
+                  selected,
+                  hunkIds: selected
+                    ? diffLines(diff.before, diff.after).hunks.map((h) => h.id)
+                    : [],
+                };
+              return next;
+            })
+          }
+          onApply={() => void applyReview()}
+          onReject={rejectReview}
+          onClose={() => setReviewMode('closed')}
+        />
+      )}
+      {reviewMode === 'git' && gitDiff && (
+        <ReviewDialog
+          title={gitDiff.path}
+          subtitle="GIT WORKING TREE · READ ONLY"
+          diffs={[gitDiff]}
+          selections={reviewSelections}
+          readOnly
+          feedback=""
+          onFeedbackChange={() => undefined}
+          onSelectFile={() => undefined}
+          onSetHunkSelection={() => undefined}
+          onSelectAllFiles={() => undefined}
+          onApply={() => undefined}
+          onReject={() => undefined}
+          onClose={() => {
+            setReviewMode('closed');
+            setGitDiff(null);
+          }}
+        />
       )}
     </main>
   );

@@ -1,12 +1,14 @@
 import type { FileDiff } from './domain.js';
+import { applySelectedHunks, diffLines, type DiffRow } from './diff.js';
 
-export interface DiffHunk {
+export interface ReviewHunk {
   id: string;
   oldStart: number;
   oldLines: number;
   newStart: number;
   newLines: number;
   content: string;
+  rows: DiffRow[];
   selected: boolean;
 }
 
@@ -14,8 +16,9 @@ export interface FileReview {
   path: string;
   before: string;
   after: string;
+  isNew?: boolean;
   selected: boolean;
-  hunks: DiffHunk[];
+  hunks: ReviewHunk[];
 }
 
 export interface ReviewSelection {
@@ -24,69 +27,127 @@ export interface ReviewSelection {
   hunkIds?: string[];
 }
 
-function splitLines(value: string): string[] {
-  return value === '' ? [] : value.split(/\r?\n/);
+/** Per-file review state used by the renderer while a batch is being reviewed. */
+export interface FileReviewSelection {
+  selected: boolean;
+  hunkIds: string[];
+}
+
+export type ReviewSelections = Record<string, FileReviewSelection>;
+
+/** Starts every proposed file and hunk selected, which is the safe default. */
+export function createReviewSelections(diffs: FileDiff[]): ReviewSelections {
+  const selections: ReviewSelections = {};
+  for (const diff of diffs)
+    selections[diff.path] = {
+      selected: true,
+      hunkIds: diffLines(diff.before, diff.after).hunks.map((hunk) => hunk.id),
+    };
+  return selections;
+}
+
+/**
+ * Turns review state into the diffs that may be written. Unselected files and
+ * hunks never reach this list, and a hunk selection cannot alter the recorded
+ * before-content used for the disk conflict check.
+ */
+export function narrowReviewedDiffs(diffs: FileDiff[], selections: ReviewSelections): FileDiff[] {
+  const narrowed: FileDiff[] = [];
+  for (const diff of diffs) {
+    const selection = selections[diff.path];
+    if (selection?.selected === false) continue;
+    const hunks = diffLines(diff.before, diff.after).hunks;
+    const ids = selection?.hunkIds ?? hunks.map((hunk) => hunk.id);
+    if (ids.length === 0) continue;
+    const after = applySelectedHunks(diff.before, hunks, new Set(ids));
+    if (after === diff.before) continue;
+    narrowed.push({
+      path: diff.path,
+      before: diff.before,
+      after,
+      ...(diff.isNew === undefined ? {} : { isNew: diff.isNew }),
+    });
+  }
+  return narrowed;
+}
+
+function hunkContent(rows: DiffRow[]): string {
+  return rows
+    .map((row) => {
+      if (row.kind === 'context') return ` ${row.oldText ?? ''}`;
+      if (row.kind === 'removed') return `-${row.oldText ?? ''}`;
+      if (row.kind === 'added') return `+${row.newText ?? ''}`;
+      return `-${row.oldText ?? ''}\n+${row.newText ?? ''}`;
+    })
+    .join('\n');
 }
 
 /**
  * Creates review units without applying anything. A hunk is a contiguous run
- * of changed lines, padded with one unchanged line for useful review context.
+ * of changed lines, padded with unchanged lines for useful review context.
  */
 export function createFileReviews(diffs: FileDiff[]): FileReview[] {
   return diffs.map((diff) => {
-    const before = splitLines(diff.before);
-    const after = splitLines(diff.after);
-    const max = Math.max(before.length, after.length);
-    const changed: number[] = [];
-    for (let index = 0; index < max; index += 1) {
-      if (before[index] !== after[index]) changed.push(index);
-    }
-    if (changed.length === 0) {
-      return { ...diff, selected: false, hunks: [] };
-    }
-    const ranges: Array<[number, number]> = [];
-    for (const index of changed) {
-      const start = Math.max(0, index - 1);
-      const end = Math.min(max - 1, index + 1);
-      const previous = ranges.at(-1);
-      if (previous && start <= previous[1] + 1) previous[1] = Math.max(previous[1], end);
-      else ranges.push([start, end]);
-    }
-    const hunks = ranges.map(([start, end], hunkIndex) => {
-      const content: string[] = [];
-      for (let index = start; index <= end; index += 1) {
-        const oldLine = before[index];
-        const newLine = after[index];
-        if (oldLine === newLine && oldLine !== undefined) content.push(` ${oldLine}`);
-        else {
-          if (oldLine !== undefined) content.push(`-${oldLine}`);
-          if (newLine !== undefined) content.push(`+${newLine}`);
-        }
-      }
+    const computed = diffLines(diff.before, diff.after);
+    const hunks: ReviewHunk[] = computed.hunks.map((hunk) => ({
+      id: `${diff.path}#${hunk.id}`,
+      oldStart: hunk.oldStart,
+      oldLines: hunk.oldLines,
+      newStart: hunk.newStart,
+      newLines: hunk.newLines,
+      content: hunkContent(hunk.rows),
+      rows: hunk.rows,
+      selected: true,
+    }));
+    if (hunks.length === 0)
       return {
-        id: `${diff.path}#${hunkIndex + 1}`,
-        oldStart: start + 1,
-        oldLines: Math.min(before.length - start, end - start + 1),
-        newStart: start + 1,
-        newLines: Math.min(after.length - start, end - start + 1),
-        content: content.join('\n'),
-        selected: true,
+        path: diff.path,
+        before: diff.before,
+        after: diff.after,
+        ...(diff.isNew === undefined ? {} : { isNew: diff.isNew }),
+        selected: false,
+        hunks,
       };
-    });
-    return { ...diff, selected: true, hunks };
+    return {
+      path: diff.path,
+      before: diff.before,
+      after: diff.after,
+      ...(diff.isNew === undefined ? {} : { isNew: diff.isNew }),
+      selected: true,
+      hunks,
+    };
   });
 }
 
-/** Returns only whole-file approved diffs. Hunk selections are review metadata. */
+/**
+ * Resolves human review choices into the diffs that may be written. Hunk
+ * selections produce a narrowed `after` content; unselected files are dropped.
+ */
 export function selectReviewedDiffs(
   reviews: FileReview[],
   selections: ReviewSelection[],
 ): FileDiff[] {
   const selectedByPath = new Map(selections.map((selection) => [selection.path, selection]));
-  return reviews
-    .filter((review) => {
-      const selection = selectedByPath.get(review.path);
-      return selection?.selected ?? review.selected;
-    })
-    .map(({ path, before, after }) => ({ path, before, after }));
+  const diffs: FileDiff[] = [];
+  for (const review of reviews) {
+    const selection = selectedByPath.get(review.path);
+    if (!(selection?.selected ?? review.selected)) continue;
+    const original = diffLines(review.before, review.after);
+    const after =
+      selection?.hunkIds === undefined
+        ? review.after
+        : applySelectedHunks(
+            review.before,
+            original.hunks.map((hunk) => ({ ...hunk, id: `${review.path}#${hunk.id}` })),
+            new Set(selection.hunkIds),
+          );
+    if (after === review.before) continue;
+    diffs.push({
+      path: review.path,
+      before: review.before,
+      after,
+      ...(review.isNew === undefined ? {} : { isNew: review.isNew }),
+    });
+  }
+  return diffs;
 }

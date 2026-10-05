@@ -1,8 +1,10 @@
 import { readFile, realpath } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { relative, resolve } from 'node:path';
-import { isPathInsideWorkspace, validateToolCall } from './permissions.js';
+import { evaluateTerminalCommand, isPathInsideWorkspace } from './permissions.js';
 import { isProtectedWorkspacePath } from './pathSafety.js';
+import { decodeConsoleOutput, decodeText } from './textEncoding.js';
+import type { TerminalPolicy } from './settings.js';
 import type { ToolCall } from './domain.js';
 
 export async function readWorkspaceFile(
@@ -25,7 +27,7 @@ export async function readWorkspaceFile(
     throw new Error('File reads must stay inside the selected workspace.');
   if (isProtectedWorkspacePath(relative(realWorkspaceRoot, realFilePath)))
     throw new Error('File reads are blocked for protected paths.');
-  const content = await readFile(realFilePath, 'utf8');
+  const content = decodeText(await readFile(realFilePath));
   if (Buffer.byteLength(content, 'utf8') > maxBytes)
     throw new Error(`File exceeds the ${maxBytes}-byte read limit.`);
   return content;
@@ -59,15 +61,68 @@ export interface TerminalResult {
   cancelled: boolean;
 }
 
+/**
+ * Variables kept for child processes. Everything else, including tokens and
+ * agent credentials from the parent environment, is withheld from commands.
+ */
+const SANDBOX_KEEP = [
+  'PATH',
+  'Path',
+  'PATHEXT',
+  'SystemRoot',
+  'SystemDrive',
+  'windir',
+  'ComSpec',
+  'TEMP',
+  'TMP',
+  'TMPDIR',
+  'HOME',
+  'USERPROFILE',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'PROGRAMFILES',
+  'ProgramFiles',
+  'ProgramFiles(x86)',
+  'ProgramData',
+  'LANG',
+  'LC_ALL',
+  'TZ',
+  'NUMBER_OF_PROCESSORS',
+  'PROCESSOR_ARCHITECTURE',
+  'SSH_AUTH_SOCK',
+  'DISPLAY',
+  'XDG_RUNTIME_DIR',
+  'COLORTERM',
+];
+
+export function buildSandboxEnvironment(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+  for (const key of SANDBOX_KEEP) {
+    const value = base[key];
+    if (typeof value === 'string') environment[key] = value;
+  }
+  environment.ZAP_SANDBOX = '1';
+  environment.NO_COLOR = '1';
+  return environment;
+}
+
+export interface TerminalRunOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  maxOutputBytes?: number;
+  policy?: TerminalPolicy;
+  env?: NodeJS.ProcessEnv;
+}
+
 export async function runApprovedTerminal(
   workspaceRoot: string,
   call: ToolCall,
-  options: { timeoutMs?: number; signal?: AbortSignal; maxOutputBytes?: number } = {},
+  options: TerminalRunOptions = {},
 ): Promise<TerminalResult> {
   const command = call.command;
   if (call.name !== 'terminal.run' || !command) throw new Error('A terminal command is required.');
-  const validation = validateToolCall(call, workspaceRoot);
-  if (!validation.allowed) throw new Error(validation.reason ?? 'Tool call is not allowed.');
+  const decision = evaluateTerminalCommand(call, workspaceRoot, options.policy);
+  if (!decision.allowed) throw new Error(decision.reason ?? 'Tool call is not allowed.');
   const started = Date.now();
   const timeoutMs = options.timeoutMs ?? 30_000;
   const maxOutputBytes = options.maxOutputBytes ?? 1_000_000;
@@ -80,10 +135,13 @@ export async function runApprovedTerminal(
         cwd: workspaceRoot,
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
+        env: options.env ?? buildSandboxEnvironment(),
       },
     );
-    let stdout = '';
-    let stderr = '';
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
     let timedOut = false;
     let cancelled = false;
     let settled = false;
@@ -95,15 +153,17 @@ export async function runApprovedTerminal(
     const timer = setTimeout(() => terminate('timeout'), timeoutMs);
     const abort = (): void => terminate('cancel');
     options.signal?.addEventListener('abort', abort, { once: true });
-    const append = (current: string, chunk: Buffer): string => {
-      const remaining = maxOutputBytes - Buffer.byteLength(current, 'utf8');
-      return remaining <= 0 ? current : current + chunk.toString('utf8').slice(0, remaining);
+    const collect = (chunks: Buffer[], used: number, chunk: Buffer): number => {
+      if (used >= maxOutputBytes) return used;
+      const remaining = maxOutputBytes - used;
+      chunks.push(chunk.length > remaining ? chunk.subarray(0, remaining) : chunk);
+      return used + Math.min(chunk.length, remaining);
     };
     child.stdout.on('data', (chunk: Buffer) => {
-      stdout = append(stdout, chunk);
+      stdoutBytes = collect(stdoutChunks, stdoutBytes, chunk);
     });
     child.stderr.on('data', (chunk: Buffer) => {
-      stderr = append(stderr, chunk);
+      stderrBytes = collect(stderrChunks, stderrBytes, chunk);
     });
     child.on('error', (error: Error) => {
       clearTimeout(timer);
@@ -119,8 +179,8 @@ export async function runApprovedTerminal(
       if (!settled) {
         settled = true;
         resolve({
-          stdout,
-          stderr,
+          stdout: decodeConsoleOutput(Buffer.concat(stdoutChunks)),
+          stderr: decodeConsoleOutput(Buffer.concat(stderrChunks)),
           exitCode,
           durationMs: Date.now() - started,
           timedOut,

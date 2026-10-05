@@ -1,17 +1,32 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, screen } from 'electron';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveModelsDirectory } from '../src/appPaths.js';
-import { runAgentTask } from '../src/agentRunner.js';
+import { runAgentTask, type AgentProgressEvent } from '../src/agentRunner.js';
 import { describeModel, discoverModels } from '../src/modelDiscovery.js';
 import { ModelManager } from '../src/modelManager.js';
-import { LlamaServerRuntime, type CompletionOptions } from '../src/llamaRuntime.js';
-import { buildWorkspaceContext, loadWorkspaceOptions } from '../src/workspace.js';
-import { applyFileDiffs, rollbackFileDiffs } from '../src/patches.js';
+import type { CompletionOptions } from '../src/llamaRuntime.js';
+import { createCompletionRuntime, type CompletionRuntime } from '../src/completionRuntime.js';
+import { describeHostedModel } from '../src/hostedRuntime.js';
+import {
+  buildWorkspaceContext,
+  loadWorkspaceOptions,
+  readWorkspaceConfig,
+  saveWorkspaceConfig,
+  type WorkspaceConfig,
+} from '../src/workspace.js';
+import { applyFileDiffs, rollbackFileDiffs, writeWorkspaceFile } from '../src/patches.js';
 import { readWorkspaceFile, readWorkspaceFileIfExists, runApprovedTerminal } from '../src/tools.js';
-import type { FileDiff, ToolCall } from '../src/domain.js';
-import { loadSettings, saveSettings, type AppSettings } from '../src/settings.js';
+import { searchWorkspaceFiles, type SearchOptions } from '../src/search.js';
+import { readGitFileDiff, readGitStatus } from '../src/git.js';
+import type { FileDiff, ToolCall, WorkspaceContext } from '../src/domain.js';
+import {
+  loadSettings,
+  sanitizeSettingsPatch,
+  saveSettings,
+  type AppSettings,
+} from '../src/settings.js';
 
 const distributionDirectory = fileURLToPath(new URL('..', import.meta.url));
 const projectDirectory = fileURLToPath(new URL('../..', import.meta.url));
@@ -23,9 +38,35 @@ let modelsDirectory = resolveModelsDirectory({
 const settingsPath = join(app.getPath('userData'), 'settings.json');
 let appSettings: AppSettings = { modelsDirectory, maxContextFiles: 2000 };
 let activeWorkspaceDirectory: string | undefined;
+let activeWorkspace: WorkspaceContext | undefined;
 let agentTaskRunning = false;
 
+function llamaOptions(): Record<string, unknown> {
+  return {
+    ...(process.env.LLAMA_SERVER_PATH ? { executablePath: process.env.LLAMA_SERVER_PATH } : {}),
+    ...(process.env.LLAMA_GPU_LAYERS ? { gpuLayers: Number(process.env.LLAMA_GPU_LAYERS) } : {}),
+  };
+}
+
+function buildRuntime(): CompletionRuntime {
+  return createCompletionRuntime(appSettings, llamaOptions());
+}
+
+let runtime: CompletionRuntime = buildRuntime();
+let modelManager = new ModelManager(runtime);
+
+const agentControllers = new Map<number, AbortController>();
+const terminalControllers = new Map<number, AbortController>();
+const searchControllers = new Map<number, AbortController>();
+
+function assertActiveWorkspace(rootPath: string, action: string): void {
+  if (!activeWorkspaceDirectory || resolve(rootPath) !== resolve(activeWorkspaceDirectory))
+    throw new Error(`${action} must use the currently selected project.`);
+}
+
 async function discoverConfiguredModels(): Promise<Awaited<ReturnType<typeof discoverModels>>> {
+  if (appSettings.provider?.kind === 'openai-compatible')
+    return [describeHostedModel(appSettings.provider)];
   const bundled = await discoverModels(modelsDirectory);
   const external = await Promise.all(
     (appSettings.modelPaths ?? []).map(async (modelPath) => {
@@ -45,12 +86,6 @@ async function discoverConfiguredModels(): Promise<Awaited<ReturnType<typeof dis
   );
 }
 
-const runtime = new LlamaServerRuntime({
-  ...(process.env.LLAMA_SERVER_PATH ? { executablePath: process.env.LLAMA_SERVER_PATH } : {}),
-  ...(process.env.LLAMA_GPU_LAYERS ? { gpuLayers: Number(process.env.LLAMA_GPU_LAYERS) } : {}),
-});
-const modelManager = new ModelManager(runtime);
-
 async function loadWorkspaceContext(rootPath: string) {
   const options = await loadWorkspaceOptions(rootPath);
   const context = await buildWorkspaceContext(rootPath, {
@@ -58,6 +93,7 @@ async function loadWorkspaceContext(rootPath: string) {
     maxFiles: appSettings.maxContextFiles,
   });
   activeWorkspaceDirectory = rootPath;
+  activeWorkspace = context;
   appSettings = { ...appSettings, workspaceDirectory: rootPath };
   await saveSettings(settingsPath, appSettings);
   return context;
@@ -65,20 +101,22 @@ async function loadWorkspaceContext(rootPath: string) {
 
 async function persistSettings(next: AppSettings): Promise<AppSettings> {
   appSettings = next;
+  modelsDirectory = next.modelsDirectory;
   await saveSettings(settingsPath, appSettings);
   return { ...appSettings };
 }
 
 async function createWindow(): Promise<void> {
   await mkdir(modelsDirectory, { recursive: true });
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
   const window = new BrowserWindow({
-    width: 1280,
-    height: 820,
+    width: Math.min(1280, workArea.width),
+    height: Math.min(820, workArea.height),
     minWidth: 960,
     minHeight: 640,
     backgroundColor: '#0b1220',
     webPreferences: {
-      preload: join(distributionDirectory, 'desktop/preload.js'),
+      preload: join(distributionDirectory, 'desktop/preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -99,29 +137,38 @@ ipcMain.handle('models:select', async (_event, modelId: string) => {
 
 ipcMain.handle('models:unload', async () => modelManager.unload());
 
+ipcMain.handle('models:health', async () => ({
+  ...(await runtime.healthCheck()),
+  state: modelManager.getState(),
+}));
+
 ipcMain.handle('models:complete', async (_event, prompt: string, options?: CompletionOptions) => {
   return runtime.complete(prompt, options);
 });
 
 ipcMain.handle('agent:run', async (event, rootPath: string, instruction: string) => {
-  if (!activeWorkspaceDirectory || resolve(rootPath) !== resolve(activeWorkspaceDirectory)) {
-    throw new Error('Agent tasks must use the currently selected workspace.');
-  }
+  assertActiveWorkspace(rootPath, 'Agent tasks');
   if (agentTaskRunning) throw new Error('An agent task is already running.');
   if (modelManager.getState().status !== 'ready')
     throw new Error('Select a model and wait until it is ready before starting an agent task.');
 
+  const controller = new AbortController();
+  const sender = event.sender;
+  agentControllers.set(sender.id, controller);
   agentTaskRunning = true;
   try {
     const workspace = await loadWorkspaceContext(rootPath);
-    const parent = BrowserWindow.fromWebContents(event.sender);
+    const parent = BrowserWindow.fromWebContents(sender);
     const ensureWorkspaceActive = (): void => {
-      if (!activeWorkspaceDirectory || resolve(rootPath) !== resolve(activeWorkspaceDirectory))
-        throw new Error('The selected project changed while this agent task was running.');
+      assertActiveWorkspace(rootPath, 'This agent task');
     };
     const result = await runAgentTask({
       workspace,
       instruction,
+      signal: controller.signal,
+      onEvent: (progress: AgentProgressEvent) => {
+        if (!sender.isDestroyed()) sender.send('agent:progress', progress);
+      },
       complete: (prompt, options) => {
         ensureWorkspaceActive();
         return runtime.complete(prompt, options);
@@ -152,10 +199,16 @@ ipcMain.handle('agent:run', async (event, rootPath: string, instruction: string)
         ensureWorkspaceActive();
         return result.response === 1;
       },
-      runTerminal: (call) => {
+      runTerminal: (call, signal) => {
         ensureWorkspaceActive();
-        return runApprovedTerminal(rootPath, call, { timeoutMs: 30_000, maxOutputBytes: 32_000 });
+        return runApprovedTerminal(rootPath, call, {
+          timeoutMs: 30_000,
+          maxOutputBytes: 32_000,
+          ...(signal ? { signal } : {}),
+          ...(appSettings.terminalPolicy ? { policy: appSettings.terminalPolicy } : {}),
+        });
       },
+      ...(appSettings.terminalPolicy ? { terminalPolicy: appSettings.terminalPolicy } : {}),
     });
     if (!activeWorkspaceDirectory || resolve(rootPath) !== resolve(activeWorkspaceDirectory)) {
       return {
@@ -168,7 +221,17 @@ ipcMain.handle('agent:run', async (event, rootPath: string, instruction: string)
     return result;
   } finally {
     agentTaskRunning = false;
+    agentControllers.delete(sender.id);
   }
+});
+
+ipcMain.handle('agent:cancel', async (event) => {
+  const controller = agentControllers.get(event.sender.id);
+  if (!controller) return { cancelled: false };
+  controller.abort();
+  const terminalController = terminalControllers.get(event.sender.id);
+  terminalController?.abort();
+  return { cancelled: true };
 });
 
 ipcMain.handle('workspace:choose', async () => {
@@ -193,6 +256,70 @@ ipcMain.handle(
     readWorkspaceFileIfExists(rootPath, filePath),
 );
 
+ipcMain.handle(
+  'workspace:write-file',
+  async (_event, rootPath: string, filePath: string, content: string) => {
+    assertActiveWorkspace(rootPath, 'File saves');
+    return writeWorkspaceFile(rootPath, filePath, content);
+  },
+);
+
+ipcMain.handle('workspace:read-config', async (_event, rootPath: string) => {
+  assertActiveWorkspace(rootPath, 'Project settings');
+  return readWorkspaceConfig(rootPath);
+});
+
+ipcMain.handle(
+  'workspace:save-config',
+  async (_event, rootPath: string, config: WorkspaceConfig) => {
+    assertActiveWorkspace(rootPath, 'Project settings');
+    const saved = await saveWorkspaceConfig(rootPath, config);
+    return loadWorkspaceContext(rootPath).then(() => saved);
+  },
+);
+
+ipcMain.handle(
+  'search:run',
+  async (event, rootPath: string, query: string, options?: SearchOptions) => {
+    assertActiveWorkspace(rootPath, 'Search');
+    const controller = new AbortController();
+    const senderId = event.sender.id;
+    searchControllers.set(senderId, controller);
+    try {
+      const files =
+        activeWorkspace?.rootPath === rootPath
+          ? activeWorkspace.files
+          : (
+              await buildWorkspaceContext(rootPath, {
+                ...(await loadWorkspaceOptions(rootPath)),
+                maxFiles: appSettings.maxContextFiles,
+              })
+            ).files;
+      return await searchWorkspaceFiles(rootPath, files, query, {
+        ...options,
+        signal: controller.signal,
+      });
+    } finally {
+      if (searchControllers.get(senderId) === controller) searchControllers.delete(senderId);
+    }
+  },
+);
+
+ipcMain.handle('search:cancel', async (event) => {
+  searchControllers.get(event.sender.id)?.abort();
+  return { cancelled: true };
+});
+
+ipcMain.handle('git:status', async (_event, rootPath: string) => {
+  assertActiveWorkspace(rootPath, 'Git status');
+  return readGitStatus(rootPath);
+});
+
+ipcMain.handle('git:diff', async (_event, rootPath: string, filePath: string) => {
+  assertActiveWorkspace(rootPath, 'Git diff');
+  return readGitFileDiff(rootPath, filePath);
+});
+
 ipcMain.handle('patches:apply', async (_event, rootPath: string, diffs: FileDiff[]) =>
   applyFileDiffs(rootPath, diffs),
 );
@@ -203,12 +330,16 @@ ipcMain.handle('patches:rollback', async (_event, rootPath: string, backupId: st
 
 ipcMain.handle('settings:get', () => ({ ...appSettings }));
 
-ipcMain.handle('settings:update-context-limit', async (_event, maxContextFiles: number) => {
-  if (!Number.isFinite(maxContextFiles)) throw new Error('Context file limit must be a number.');
-  return persistSettings({
-    ...appSettings,
-    maxContextFiles: Math.max(100, Math.min(10_000, Math.floor(maxContextFiles))),
-  });
+ipcMain.handle('settings:update', async (_event, patch: Partial<AppSettings>) => {
+  const sanitized = sanitizeSettingsPatch(patch);
+  const previousProvider = appSettings.provider?.kind;
+  const next = await persistSettings({ ...appSettings, ...sanitized });
+  if (sanitized.provider && sanitized.provider.kind !== previousProvider) {
+    await runtime.unload().catch(() => undefined);
+    runtime = buildRuntime();
+    modelManager = new ModelManager(runtime);
+  }
+  return { ...next, state: modelManager.getState() };
 });
 
 ipcMain.handle('settings:choose-models-directory', async () => {
@@ -220,7 +351,6 @@ ipcMain.handle('settings:choose-models-directory', async () => {
   if (result.canceled || !selectedPath) return null;
   await mkdir(selectedPath, { recursive: true });
   await modelManager.unload();
-  modelsDirectory = selectedPath;
   return persistSettings({ ...appSettings, modelsDirectory: selectedPath });
 });
 
@@ -237,10 +367,8 @@ ipcMain.handle('models:choose-file', async () => {
   return persistSettings({ ...appSettings, modelPaths });
 });
 
-ipcMain.handle('terminal:run', async (_event, rootPath: string, command: string) => {
-  if (!activeWorkspaceDirectory || resolve(rootPath) !== resolve(activeWorkspaceDirectory)) {
-    throw new Error('Terminal commands must run in the currently selected workspace.');
-  }
+ipcMain.handle('terminal:run', async (event, rootPath: string, command: string) => {
+  assertActiveWorkspace(rootPath, 'Terminal commands');
   if (!command.trim()) throw new Error('Enter a terminal command first.');
   const call: ToolCall = {
     id: `manual-${Date.now()}`,
@@ -250,12 +378,29 @@ ipcMain.handle('terminal:run', async (_event, rootPath: string, command: string)
     command,
     status: 'approved',
   };
-  return runApprovedTerminal(rootPath, call);
+  const controller = new AbortController();
+  const senderId = event.sender.id;
+  terminalControllers.set(senderId, controller);
+  try {
+    return await runApprovedTerminal(rootPath, call, {
+      ...(appSettings.terminalPolicy ? { policy: appSettings.terminalPolicy } : {}),
+      signal: controller.signal,
+    });
+  } finally {
+    if (terminalControllers.get(senderId) === controller) terminalControllers.delete(senderId);
+  }
+});
+
+ipcMain.handle('terminal:cancel', async (event) => {
+  terminalControllers.get(event.sender.id)?.abort();
+  return { cancelled: true };
 });
 
 app.whenReady().then(async () => {
   appSettings = await loadSettings(settingsPath, { modelsDirectory, maxContextFiles: 2000 });
   modelsDirectory = appSettings.modelsDirectory;
+  runtime = buildRuntime();
+  modelManager = new ModelManager(runtime);
   await mkdir(modelsDirectory, { recursive: true });
   await createWindow();
   app.on('activate', async () => {
@@ -272,5 +417,8 @@ app.on('before-quit', (event) => {
   if (quitting) return;
   event.preventDefault();
   quitting = true;
+  for (const controller of agentControllers.values()) controller.abort();
+  for (const controller of terminalControllers.values()) controller.abort();
+  for (const controller of searchControllers.values()) controller.abort();
   void runtime.unload().finally(() => app.quit());
 });

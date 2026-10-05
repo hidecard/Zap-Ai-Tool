@@ -8,6 +8,8 @@ export interface CompletionOptions {
   topP?: number;
   stop?: string[];
   timeoutMs?: number;
+  /** User cancellation, for example the Stop button during an agent task. */
+  signal?: AbortSignal;
 }
 
 export interface CompletionResult {
@@ -26,6 +28,17 @@ export interface LlamaRuntimeOptions {
   requestTimeoutMs?: number;
   extraArgs?: string[];
   spawnProcess?: (command: string, args: string[]) => ChildProcess;
+}
+
+/** Combines cancellation with the request timeout so either one stops the call. */
+export function combineSignals(signal: AbortSignal | undefined, timeout: AbortSignal): AbortSignal {
+  if (!signal) return timeout;
+  if (signal.aborted) return signal;
+  const controller = new AbortController();
+  const abort = (): void => controller.abort(signal.reason);
+  signal.addEventListener('abort', abort, { once: true });
+  timeout.addEventListener('abort', () => controller.abort(timeout.reason), { once: true });
+  return controller.signal;
 }
 
 /**
@@ -155,7 +168,10 @@ export class LlamaServerRuntime implements ModelRuntime {
     const response = await fetch(`${this.baseUrl}/completion`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      signal: AbortSignal.timeout(options.timeoutMs ?? this.options.requestTimeoutMs),
+      signal: combineSignals(
+        options.signal,
+        AbortSignal.timeout(options.timeoutMs ?? this.options.requestTimeoutMs),
+      ),
       body: JSON.stringify({
         prompt,
         n_predict: options.maxTokens ?? 256,

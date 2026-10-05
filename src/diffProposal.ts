@@ -1,5 +1,5 @@
 import type { FileDiff } from './domain.js';
-import { isProtectedWorkspacePath } from './pathSafety.js';
+import { isProjectConfigPath, isProtectedWorkspacePath } from './pathSafety.js';
 
 function parseCandidate(raw: string): unknown {
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
@@ -42,7 +42,7 @@ function normalizeProposalPath(value: string): string | undefined {
     path.split('/').some((part) => part === '' || part === '.' || part === '..')
   )
     return undefined;
-  if (isProtectedWorkspacePath(path)) return undefined;
+  if (isProtectedWorkspacePath(path) || isProjectConfigPath(path)) return undefined;
   return path;
 }
 

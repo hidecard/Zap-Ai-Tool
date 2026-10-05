@@ -1,4 +1,4 @@
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import type { WorkspaceContext, WorkspaceFile } from './domain.js';
 import { isProtectedWorkspacePath } from './pathSafety.js';
@@ -12,24 +12,63 @@ export interface WorkspaceOptions {
   maxFileBytes?: number;
 }
 
-export async function loadWorkspaceOptions(rootPath: string): Promise<WorkspaceOptions> {
-  const options: WorkspaceOptions = {};
+export interface WorkspaceConfig {
+  instructions: string;
+  ignorePatterns: string[];
+}
+
+/** Reads the optional ZAP.md project instructions and .zapignore patterns. */
+export async function readWorkspaceConfig(rootPath: string): Promise<WorkspaceConfig> {
+  const config: WorkspaceConfig = { instructions: '', ignorePatterns: [] };
   try {
     const instructions = await readFile(join(rootPath, 'ZAP.md'), 'utf8');
-    if (instructions.trim()) options.instructions = instructions.trim();
+    if (instructions.trim()) config.instructions = instructions.trim();
   } catch {
     // Project instructions are optional.
   }
   try {
     const raw = await readFile(join(rootPath, '.zapignore'), 'utf8');
-    const ignorePatterns = raw
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0 && !line.startsWith('#'));
-    if (ignorePatterns.length > 0) options.ignorePatterns = ignorePatterns;
+    config.ignorePatterns = parseIgnorePatterns(raw);
   } catch {
     // Project ignore patterns are optional.
   }
+  return config;
+}
+
+/** Persists project instructions and ignore patterns back into the workspace. */
+export async function saveWorkspaceConfig(
+  rootPath: string,
+  config: WorkspaceConfig,
+): Promise<WorkspaceConfig> {
+  const instructions = config.instructions.trim();
+  const patterns = config.ignorePatterns
+    .map((pattern) => pattern.trim())
+    .filter((pattern) => pattern.length > 0 && !pattern.startsWith('#'))
+    .slice(0, 200);
+  if (instructions) await writeFile(join(rootPath, 'ZAP.md'), `${instructions}\n`, 'utf8');
+  else await rm(join(rootPath, 'ZAP.md'), { force: true });
+  if (patterns.length > 0)
+    await writeFile(
+      join(rootPath, '.zapignore'),
+      `# Zap ignore patterns\n${patterns.join('\n')}\n`,
+      'utf8',
+    );
+  else await rm(join(rootPath, '.zapignore'), { force: true });
+  return { instructions, ignorePatterns: patterns };
+}
+
+function parseIgnorePatterns(raw: string): string[] {
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith('#'));
+}
+
+export async function loadWorkspaceOptions(rootPath: string): Promise<WorkspaceOptions> {
+  const config = await readWorkspaceConfig(rootPath);
+  const options: WorkspaceOptions = {};
+  if (config.instructions) options.instructions = config.instructions;
+  if (config.ignorePatterns.length > 0) options.ignorePatterns = config.ignorePatterns;
   return options;
 }
 

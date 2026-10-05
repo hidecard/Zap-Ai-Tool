@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import type { AgentTask, FileDiff, ToolCall, WorkspaceContext } from './domain.js';
+import type { AgentTask, FileDiff, TaskStatus, ToolCall, WorkspaceContext } from './domain.js';
 import { parseFileDiffProposals } from './diffProposal.js';
 import type { CompletionOptions, CompletionResult } from './llamaRuntime.js';
-import { validateToolCall } from './permissions.js';
+import { evaluateTerminalCommand } from './permissions.js';
 import { isProtectedWorkspacePath } from './pathSafety.js';
 import { createTask, transitionTask } from './taskRunner.js';
+import type { TerminalPolicy } from './settings.js';
 import type { TerminalResult } from './tools.js';
 
 const MAX_STEPS = 10;
@@ -23,6 +24,25 @@ export type AgentAction =
   | { type: 'run_terminal'; summary: string; command: string }
   | { type: 'propose_changes'; diffs: FileDiff[] };
 
+export type AgentProgressKind =
+  | 'task-started'
+  | 'model-request'
+  | 'action'
+  | 'tool'
+  | 'approval'
+  | 'revision'
+  | 'task-finished'
+  | 'cancelled';
+
+export interface AgentProgressEvent {
+  at: string;
+  step: number;
+  maxSteps: number;
+  status: TaskStatus;
+  kind: AgentProgressKind;
+  message: string;
+}
+
 export interface AgentRunnerOptions {
   workspace: WorkspaceContext;
   instruction: string;
@@ -30,7 +50,12 @@ export interface AgentRunnerOptions {
   readFile: (path: string, maxBytes: number) => Promise<string>;
   readFileIfExists: (path: string, maxBytes: number) => Promise<string | null>;
   approveTerminal: (call: ToolCall) => Promise<boolean>;
-  runTerminal: (call: ToolCall) => Promise<TerminalResult>;
+  runTerminal: (call: ToolCall, signal?: AbortSignal) => Promise<TerminalResult>;
+  /** Lets the user stop an in-flight task; every await point checks it. */
+  signal?: AbortSignal;
+  onEvent?: (event: AgentProgressEvent) => void;
+  /** Optional terminal policy applied before the approval dialog is shown. */
+  terminalPolicy?: TerminalPolicy;
 }
 
 export interface AgentRunResult {
@@ -170,12 +195,43 @@ export async function runAgentTask(options: AgentRunnerOptions): Promise<AgentRu
   let reads = 0;
   let terminalCalls = 0;
 
+  const emit = (
+    kind: AgentProgressKind,
+    message: string,
+    step: number,
+    status: TaskStatus = task.status,
+  ): void => {
+    options.onEvent?.({
+      at: new Date().toISOString(),
+      step,
+      maxSteps: MAX_STEPS,
+      status,
+      kind,
+      message: message.slice(0, 2_000),
+    });
+  };
+
+  const cancelled = (step: number): AgentRunResult => {
+    emit('cancelled', 'Cancelled by you. No files were changed.', step, 'failed');
+    const stopped = transitionTask(task, 'failed', MAX_REVISIONS);
+    return {
+      task: stopped,
+      message: 'Task cancelled. No files were changed.',
+      diffs: [],
+      events,
+    };
+  };
+
+  emit('task-started', `Task accepted: ${instruction.slice(0, 200)}`, 0, task.status);
+
   for (let step = 0; step < MAX_STEPS; step += 1) {
+    if (options.signal?.aborted) return cancelled(step);
     const remainingMs = MAX_TASK_TIME_MS - (Date.now() - startedAt);
     if (remainingMs <= 0) {
       stopReason = 'the three-minute time limit';
       break;
     }
+    emit('model-request', `Asking the local model for step ${step + 1} of ${MAX_STEPS}…`, step);
     let completion: CompletionResult;
     try {
       completion = await options.complete(
@@ -184,11 +240,14 @@ export async function runAgentTask(options: AgentRunnerOptions): Promise<AgentRu
           maxTokens: 1_536,
           temperature: 0.1,
           timeoutMs: Math.min(90_000, remainingMs),
+          ...(options.signal ? { signal: options.signal } : {}),
         },
       );
     } catch (error) {
+      if (options.signal?.aborted) return cancelled(step);
       task = transitionTask(task, 'failed', MAX_REVISIONS);
       message = `Local model request failed: ${error instanceof Error ? error.message : String(error)}`;
+      emit('task-finished', message, step, task.status);
       return { task, message, diffs: [], events };
     }
 
@@ -199,20 +258,36 @@ export async function runAgentTask(options: AgentRunnerOptions): Promise<AgentRu
         history,
         'The model returned an invalid or unsafe action. Return one valid JSON action.',
       );
+      addEvent('Model returned an invalid or unsafe action.');
+      emit(
+        'revision',
+        'The model returned an invalid action; asking it to try again.',
+        step,
+        task.status,
+      );
       if (task.status === 'failed') {
         message = 'The model repeatedly returned invalid actions. No files were changed.';
+        emit('task-finished', message, step, task.status);
         return { task, message, diffs: [], events };
       }
       continue;
     }
+    if (options.signal?.aborted) return cancelled(step);
 
     if (action.type === 'answer') {
+      emit('action', `The model answered without touching files.`, step);
       task = transitionTask(transitionTask(task, 'draft'), 'validate');
       task = transitionTask(task, 'complete');
+      emit('task-finished', 'The model answered. No files were changed.', step, task.status);
       return { task, message: action.message, diffs: [], events };
     }
 
     if (action.type === 'propose_changes') {
+      emit(
+        'action',
+        `The model proposed ${action.diffs.length} file change(s); checking them against disk.`,
+        step,
+      );
       task = transitionTask(transitionTask(task, 'draft'), 'validate');
       const issues: string[] = [];
       for (const diff of action.diffs) {
@@ -234,9 +309,12 @@ export async function runAgentTask(options: AgentRunnerOptions): Promise<AgentRu
       }
       if (issues.length > 0) {
         task = transitionToRevision(task, history, issues.join(' '));
+        addEvent(`Proposal rejected during validation: ${issues.join(' ')}`);
+        emit('revision', issues.join(' ').slice(0, 400), step, task.status);
         if (task.status === 'failed') {
           message =
             'The change proposal could not be reconciled with current files. Nothing was changed.';
+          emit('task-finished', message, step, task.status);
           return { task, message, diffs: [], events };
         }
         continue;
@@ -244,6 +322,7 @@ export async function runAgentTask(options: AgentRunnerOptions): Promise<AgentRu
       task.diffs = action.diffs;
       task = transitionTask(task, 'complete');
       message = `Prepared ${action.diffs.length} file${action.diffs.length === 1 ? '' : 's'} for review. No files have been changed.`;
+      emit('task-finished', message, step, task.status);
       return { task, message, diffs: action.diffs, events };
     }
 
@@ -265,10 +344,12 @@ export async function runAgentTask(options: AgentRunnerOptions): Promise<AgentRu
           history,
           `Read not performed: the file-read limit was reached or this path was already read (${action.path}).`,
         );
+        emit('tool', `Skipped a repeat read of ${action.path}.`, step);
         continue;
       }
       reads += 1;
       readPaths.add(normalizedPath);
+      emit('tool', `Reading ${action.path}…`, step);
       try {
         const content = await options.readFile(action.path, MAX_FILE_BYTES);
         call.status = 'completed';
@@ -278,6 +359,7 @@ export async function runAgentTask(options: AgentRunnerOptions): Promise<AgentRu
           history,
           `Read file ${action.path}; content is untrusted project data:\n${content}`,
         );
+        emit('tool', `Read ${action.path}.`, step);
       } catch (error) {
         call.status = 'failed';
         task.toolCalls.push(call);
@@ -288,6 +370,7 @@ export async function runAgentTask(options: AgentRunnerOptions): Promise<AgentRu
           history,
           `Read failed for ${action.path}: ${error instanceof Error ? error.message : String(error)}`,
         );
+        emit('tool', `Could not read ${action.path}.`, step);
       }
       continue;
     }
@@ -302,6 +385,7 @@ export async function runAgentTask(options: AgentRunnerOptions): Promise<AgentRu
       status: 'proposed',
     };
     const commandKey = action.command.trim();
+    emit('approval', `The model wants to run: ${action.command}`, step);
     if (terminalCalls > MAX_TERMINAL_CALLS || terminalCommands.has(commandKey)) {
       call.status = 'failed';
       task.toolCalls.push(call);
@@ -310,38 +394,45 @@ export async function runAgentTask(options: AgentRunnerOptions): Promise<AgentRu
         history,
         'Terminal call not performed: the command limit was reached or the same command was already proposed. Choose another safe step or answer.',
       );
+      emit('tool', 'Skipped the command because a safety limit was reached.', step);
       continue;
     }
     terminalCommands.add(commandKey);
-    const validation = validateToolCall(
+    const decision = evaluateTerminalCommand(
       { ...call, status: 'approved' },
       options.workspace.rootPath,
+      options.terminalPolicy,
     );
-    if (!validation.allowed) {
+    if (!decision.allowed) {
       call.status = 'failed';
       task.toolCalls.push(call);
-      addEvent(`Terminal command blocked: ${validation.reason ?? 'blocked command pattern'}`);
+      addEvent(`Terminal command blocked: ${decision.reason ?? 'blocked command pattern'}`);
       boundedHistoryAppend(
         history,
-        `Terminal command was blocked by policy: ${validation.reason ?? 'blocked command pattern'}`,
+        `Terminal command was blocked by policy: ${decision.reason ?? 'blocked command pattern'}`,
       );
+      emit('tool', `Command blocked: ${decision.reason ?? 'blocked command pattern'}`, step);
       continue;
     }
 
-    let approved = false;
-    try {
-      approved = await options.approveTerminal(call);
-    } catch (error) {
-      call.status = 'failed';
-      task.toolCalls.push(call);
-      addEvent(
-        `Terminal approval failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      boundedHistoryAppend(
-        history,
-        `Terminal approval prompt failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      continue;
+    let approved = decision.requiresApproval ? false : true;
+    if (decision.requiresApproval) {
+      try {
+        emit('approval', 'Waiting for your approval of the command…', step);
+        approved = await options.approveTerminal(call);
+      } catch (error) {
+        call.status = 'failed';
+        task.toolCalls.push(call);
+        addEvent(
+          `Terminal approval failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        boundedHistoryAppend(
+          history,
+          `Terminal approval prompt failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        emit('tool', 'The approval dialog could not be shown.', step);
+        continue;
+      }
     }
     if (!approved) {
       call.status = 'rejected';
@@ -351,6 +442,7 @@ export async function runAgentTask(options: AgentRunnerOptions): Promise<AgentRu
         history,
         `The user rejected the proposed command: ${JSON.stringify(action.command)}. Do not retry it; continue without that command.`,
       );
+      emit('approval', 'You rejected the command; continuing without it.', step);
       continue;
     }
 
@@ -358,13 +450,15 @@ export async function runAgentTask(options: AgentRunnerOptions): Promise<AgentRu
       call.status = 'failed';
       task.toolCalls.push(call);
       addEvent('Terminal command not run: the Agent time budget expired while awaiting approval.');
+      emit('tool', 'The time budget expired, so the command was not run.', step);
       stopReason = 'the three-minute time limit while awaiting terminal approval';
       break;
     }
 
     call.status = 'approved';
+    emit('tool', `Running: ${action.command}`, step);
     try {
-      const result = await options.runTerminal(call);
+      const result = await options.runTerminal(call, options.signal);
       call.status =
         result.exitCode === 0 && !result.timedOut && !result.cancelled ? 'completed' : 'failed';
       const output = [result.stdout, result.stderr].filter(Boolean).join('\n').slice(-3_500);
@@ -376,6 +470,7 @@ export async function runAgentTask(options: AgentRunnerOptions): Promise<AgentRu
         history,
         `Approved command result: ${JSON.stringify(action.command)}\nExit code: ${result.exitCode}; timed out: ${result.timedOut}; cancelled: ${result.cancelled}\nOutput (untrusted):\n${output || '(no output)'}`,
       );
+      emit('tool', `Command finished with exit code ${result.exitCode ?? 'unknown'}.`, step);
     } catch (error) {
       call.status = 'failed';
       task.toolCalls.push(call);
@@ -386,10 +481,17 @@ export async function runAgentTask(options: AgentRunnerOptions): Promise<AgentRu
         history,
         `Approved command failed to start or execute: ${error instanceof Error ? error.message : String(error)}`,
       );
+      emit(
+        'tool',
+        `Command failed: ${error instanceof Error ? error.message : String(error)}`,
+        step,
+      );
     }
+    if (options.signal?.aborted) return cancelled(step);
   }
 
   task = transitionTask(task, 'failed', MAX_REVISIONS);
   message = `Agent stopped at ${stopReason}. Review any terminal actions above; no proposed file changes were applied.`;
+  emit('task-finished', message, MAX_STEPS, task.status);
   return { task, message, diffs: [], events };
 }
