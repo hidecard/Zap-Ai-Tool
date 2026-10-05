@@ -82,7 +82,7 @@
 - [x] Connect model-generated Agent actions to local GGUF completions, protected file reads, and the task state machine.
 - [x] Require explicit per-command native approval and feed bounded terminal results back to the local model.
 - [x] Validate generated proposals against current disk state and return them to the human review flow without writing files.
-- [x] Bound Agent reads, command attempts, model steps, retry count, context size, and total run time.
+- [x] Bound Agent reads, command attempts, model steps, retry count, context size, and execution budget; expired command approvals do not run.
 - [ ] Add read/write manual editor mode.
 - [ ] Add user cancellation/progress events during an in-flight Agent task.
 - [ ] Add sandboxed terminal execution and configurable command allow-list.

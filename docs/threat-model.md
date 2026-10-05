@@ -16,7 +16,7 @@ Zap Ai Tool treats model output as **untrusted input**. A model can propose tool
 - Build proposals are limited to eight unique whole-file changes. Existing-file before-content must match disk before review; explicit create-vs-update intent is checked for both new and empty existing files. Users can deselect files before approving the batch.
 - Mutating and network-risk tool calls require `status: approved`.
 - Agent mode uses the local model to return one structured action at a time. It is limited to ten model steps, three minutes, four file reads (8 KB each), two terminal proposals, eight file changes, and three correction attempts.
-- Every Agent terminal command is shown in a native OS approval dialog with its exact text and project working directory. The main process verifies the selected workspace before and after approval and again before execution; rejection is recorded and the command is not run.
+- Every Agent terminal command is shown in a native OS approval dialog with its exact text and project working directory. The main process verifies the selected workspace before and after approval and again before execution; rejection is recorded and the command is not run. If the Agent execution budget expires while the dialog is waiting, a later approval does not execute the stale command.
 - The manual terminal also requires an explicit **Run** action. The main process requires the command's working directory to match the currently selected workspace.
 - Destructive shell patterns, privilege escalation, download-to-shell pipelines, and protected `/etc` writes are blocked.
 - Terminal output is bounded and fed back to the local model as untrusted data; commands have timeout/cancellation reporting.

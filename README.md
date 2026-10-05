@@ -15,7 +15,7 @@ A user-invoked terminal is available in the selected project. Commands run only 
 - Workspace folder picker and drag-and-drop, ignore-aware file indexing, context estimates, and automatic reopening of the last project.
 - A real read-only editor view that loads the selected file from disk, plus filename/path filtering.
 - Ask mode sends the selected file content to the local model; Build mode includes the selected file plus a few relevant files, then can draft a bounded multi-file change or new file.
-- Agent mode uses a bounded task loop with structured model actions, up to four protected workspace-file reads, at most two terminal command proposals (each shown in a native approval dialog), up to eight reviewed file changes, three self-correction attempts, and a three-minute run limit.
+- Agent mode uses a bounded task loop with structured model actions, up to four protected workspace-file reads, at most two terminal command proposals (each shown in a native approval dialog), up to eight reviewed file changes, three self-correction attempts, and a three-minute execution budget. A command is not run if the budget expires while its approval dialog is waiting.
 - The Agent reports its tool actions and bounded terminal output in the Output panel. It never writes files itself; a proposal is checked against current disk contents and handed to the existing review/approval flow.
 - Model context and change proposals share protected-path checks for environment files, package/cloud credentials, private keys, repository metadata, backups, dependencies, and build output.
 - Reviewed changes are applied transactionally with stale-file checks, backups, and an Undo action.

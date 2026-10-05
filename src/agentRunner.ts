@@ -354,6 +354,14 @@ export async function runAgentTask(options: AgentRunnerOptions): Promise<AgentRu
       continue;
     }
 
+    if (Date.now() - startedAt >= MAX_TASK_TIME_MS) {
+      call.status = 'failed';
+      task.toolCalls.push(call);
+      addEvent('Terminal command not run: the Agent time budget expired while awaiting approval.');
+      stopReason = 'the three-minute time limit while awaiting terminal approval';
+      break;
+    }
+
     call.status = 'approved';
     try {
       const result = await options.runTerminal(call);
